@@ -1,0 +1,424 @@
+-- Bảng 1: Monthly Metrics
+DROP TABLE IF EXISTS customer_monthly_metrics;
+
+CREATE TABLE customer_monthly_metrics (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    CustCode VARCHAR(50) NOT NULL,
+    RptYear SMALLINT NOT NULL,
+    RptMonth TINYINT NOT NULL,
+    total_orders INT DEFAULT 0,
+    total_sales DECIMAL(18,2) DEFAULT 0,
+    total_qty INT DEFAULT 0,
+    avg_order_value DECIMAL(18,2) DEFAULT 0,
+    max_order_value DECIMAL(18,2) DEFAULT 0,
+    stddev_order_value DECIMAL(18,2) DEFAULT 0,
+    distinct_product_types INT DEFAULT 0,
+    mid_checkpoint_orders INT DEFAULT 0,
+    end_checkpoint_orders INT DEFAULT 0,
+    total_checkpoint_orders INT DEFAULT 0,
+    checkpoint_amount DECIMAL(18,2) DEFAULT 0,
+    distinct_order_days INT DEFAULT 0,
+    first_order_date DATE DEFAULT NULL,
+    last_order_date DATE DEFAULT NULL,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_cust_period (CustCode, RptYear, RptMonth),
+    INDEX idx_year_month (RptYear, RptMonth),
+    INDEX idx_cust_code (CustCode),
+    INDEX idx_last_updated (last_updated)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Bảng 2: Product Summary
+CREATE TABLE IF NOT EXISTS customer_product_summary (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    CustCode VARCHAR(50) NOT NULL,
+    RptYear SMALLINT NOT NULL,
+    RptMonth TINYINT NOT NULL,
+    product_type VARCHAR(10) NOT NULL,
+    total_qty INT DEFAULT 0,
+    total_amount DECIMAL(18,2) DEFAULT 0,
+    order_count INT DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_cust_product (CustCode, RptYear, RptMonth, product_type),
+    INDEX idx_cust_period (CustCode, RptYear, RptMonth),
+    INDEX idx_product_type (product_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Bảng 3: Daily Summary
+CREATE TABLE IF NOT EXISTS customer_daily_summary (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    CustCode VARCHAR(50) NOT NULL,
+    order_date DATE NOT NULL,
+    order_count INT DEFAULT 0,
+    daily_sales DECIMAL(18,2) DEFAULT 0,
+    RptYear SMALLINT NOT NULL,
+    RptMonth TINYINT NOT NULL,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_cust_date (CustCode, order_date),
+    INDEX idx_cust_period (CustCode, RptYear, RptMonth),
+    INDEX idx_order_date (order_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Bảng 4: Historical Metrics
+CREATE TABLE IF NOT EXISTS customer_historical_metrics (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    CustCode VARCHAR(50) NOT NULL,
+    base_year SMALLINT NOT NULL,
+    base_month TINYINT NOT NULL,
+    avg_sales DECIMAL(18,2) DEFAULT 0,
+    max_sales DECIMAL(18,2) DEFAULT 0,
+    avg_orders DECIMAL(10,2) DEFAULT 0,
+    months_count INT DEFAULT 0,
+    last_order_date DATE,
+    last_period_sales DECIMAL(18,2) DEFAULT 0,
+    months_since_last_order INT DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_cust_base (CustCode, base_year, base_month),
+    INDEX idx_cust_code (CustCode)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Bảng 5: Usual Products
+CREATE TABLE IF NOT EXISTS customer_usual_products (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    CustCode VARCHAR(50) NOT NULL,
+    ProductCode VARCHAR(50) NOT NULL,
+    product_type VARCHAR(10) NOT NULL,
+    frequency INT DEFAULT 0,
+    total_amount DECIMAL(18,2) DEFAULT 0,
+    last_purchase_date DATE,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_cust_product (CustCode, ProductCode),
+    INDEX idx_cust_code (CustCode),
+    INDEX idx_product_type (product_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Bảng 6: Cache Results
+CREATE TABLE IF NOT EXISTS anomaly_results_cache (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    cache_key VARCHAR(64) NOT NULL UNIQUE,
+    years VARCHAR(50) NOT NULL,
+    months VARCHAR(50) NOT NULL,
+    filters_json TEXT,
+    total_customers INT DEFAULT 0,
+    critical_count INT DEFAULT 0,
+    high_count INT DEFAULT 0,
+    medium_count INT DEFAULT 0,
+    low_count INT DEFAULT 0,
+    results_json LONGTEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NULL DEFAULT NULL,
+    INDEX idx_cache_key (cache_key),
+    INDEX idx_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `refresh_all_summary_tables`(IN p_year SMALLINT, IN p_month TINYINT)
+BEGIN
+    -- Tắt warning để tránh conflict
+    DECLARE CONTINUE HANDLER FOR SQLWARNING BEGIN END;
+    
+    CALL refresh_monthly_metrics(p_year, p_month);
+    CALL refresh_product_summary(p_year, p_month);
+    CALL refresh_daily_summary(p_year, p_month);
+    CALL refresh_historical_metrics(p_year, p_month);
+    CALL refresh_usual_products();
+    
+    -- Clear cache
+    DELETE FROM anomaly_results_cache WHERE expires_at < NOW();
+    
+    -- Không return resultset cuối cùng
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `refresh_daily_summary`(IN p_year SMALLINT, IN p_month TINYINT)
+BEGIN
+    DELETE FROM customer_daily_summary 
+    WHERE RptYear = p_year AND RptMonth = p_month;
+    
+    INSERT INTO customer_daily_summary (
+        CustCode, order_date, order_count, daily_sales, RptYear, RptMonth
+    )
+    SELECT 
+        CustCode,
+        DATE(OrderDate) as order_date,
+        COUNT(DISTINCT OrderNumber) as order_count,
+        SUM(TotalNetAmount) as daily_sales,
+        RptYear,
+        RptMonth
+    FROM orderdetail
+    WHERE RptYear = p_year AND RptMonth = p_month
+    GROUP BY CustCode, DATE(OrderDate), RptYear, RptMonth;
+    
+    SELECT CONCAT('Refreshed ', ROW_COUNT(), ' daily records') as message;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `refresh_historical_metrics`(IN p_year SMALLINT, IN p_month TINYINT)
+BEGIN
+    DELETE FROM customer_historical_metrics 
+    WHERE base_year = p_year AND base_month = p_month;
+    
+    INSERT INTO customer_historical_metrics (
+        CustCode, base_year, base_month,
+        avg_sales, max_sales, avg_orders, months_count,
+        last_order_date, last_period_sales, months_since_last_order
+    )
+    SELECT 
+        CustCode,
+        p_year as base_year,
+        p_month as base_month,
+        COALESCE(AVG(monthly_sales), 0) as avg_sales,
+        COALESCE(MAX(monthly_sales), 0) as max_sales,
+        COALESCE(AVG(monthly_orders), 0) as avg_orders,
+        COUNT(*) as months_count,
+        MAX(order_date) as last_order_date,
+        SUM(monthly_sales) as last_period_sales,
+        TIMESTAMPDIFF(MONTH, MAX(order_date), 
+            CONCAT(p_year, '-', LPAD(p_month, 2, '0'), '-01')) as months_since_last_order
+    FROM (
+        SELECT 
+            CustCode,
+            RptYear, 
+            RptMonth,
+            SUM(TotalNetAmount) as monthly_sales,
+            COUNT(DISTINCT OrderNumber) as monthly_orders,
+            MAX(OrderDate) as order_date
+        FROM orderdetail
+        WHERE (RptYear < p_year OR (RptYear = p_year AND RptMonth < p_month))
+        GROUP BY CustCode, RptYear, RptMonth
+        ORDER BY RptYear DESC, RptMonth DESC
+        LIMIT 999999
+    ) as prev_months
+    GROUP BY CustCode;
+    
+    SELECT CONCAT('Refreshed ', ROW_COUNT(), ' historical records') as message;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `refresh_monthly_metrics`(IN p_year SMALLINT, IN p_month TINYINT)
+BEGIN
+    DELETE FROM customer_monthly_metrics 
+    WHERE RptYear = p_year AND RptMonth = p_month;
+    
+    INSERT INTO customer_monthly_metrics (
+        CustCode, RptYear, RptMonth,
+        total_orders, total_sales, total_qty,
+        avg_order_value, max_order_value, stddev_order_value,
+        distinct_product_types,
+        mid_checkpoint_orders, end_checkpoint_orders,
+        total_checkpoint_orders, checkpoint_amount,
+        distinct_order_days, first_order_date, last_order_date
+    )
+    SELECT 
+        o.CustCode,
+        o.RptYear,
+        o.RptMonth,
+        COUNT(DISTINCT o.OrderNumber) as total_orders,
+        SUM(o.TotalNetAmount) as total_sales,
+        SUM(o.Qty) as total_qty,
+        AVG(o.TotalNetAmount) as avg_order_value,
+        MAX(o.TotalNetAmount) as max_order_value,
+        STDDEV(o.TotalNetAmount) as stddev_order_value,
+        COUNT(DISTINCT SUBSTRING(o.ProductCode, 1, 2)) as distinct_product_types,
+        SUM(CASE WHEN DAY(o.OrderDate) BETWEEN 12 AND 14 THEN 1 ELSE 0 END) as mid_checkpoint_orders,
+        SUM(CASE WHEN DAY(o.OrderDate) BETWEEN 26 AND 28 THEN 1 ELSE 0 END) as end_checkpoint_orders,
+        SUM(CASE WHEN DAY(o.OrderDate) BETWEEN 12 AND 14 
+                 OR DAY(o.OrderDate) BETWEEN 26 AND 28 THEN 1 ELSE 0 END) as total_checkpoint_orders,
+        SUM(CASE WHEN DAY(o.OrderDate) BETWEEN 12 AND 14 
+                 OR DAY(o.OrderDate) BETWEEN 26 AND 28 
+                 THEN o.TotalNetAmount ELSE 0 END) as checkpoint_amount,
+        COUNT(DISTINCT DATE(o.OrderDate)) as distinct_order_days,
+        MIN(o.OrderDate) as first_order_date,
+        MAX(o.OrderDate) as last_order_date
+    FROM orderdetail o
+    WHERE o.RptYear = p_year AND o.RptMonth = p_month
+    GROUP BY o.CustCode, o.RptYear, o.RptMonth;
+    
+    SELECT CONCAT('Refreshed ', ROW_COUNT(), ' records') as message;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `refresh_product_summary`(IN p_year SMALLINT, IN p_month TINYINT)
+BEGIN
+    DELETE FROM customer_product_summary 
+    WHERE RptYear = p_year AND RptMonth = p_month;
+    
+    INSERT INTO customer_product_summary (
+        CustCode, RptYear, RptMonth, product_type,
+        total_qty, total_amount, order_count
+    )
+    SELECT 
+        CustCode,
+        RptYear,
+        RptMonth,
+        SUBSTRING(ProductCode, 1, 2) as product_type,
+        SUM(Qty) as total_qty,
+        SUM(TotalNetAmount) as total_amount,
+        COUNT(DISTINCT OrderNumber) as order_count
+    FROM orderdetail
+    WHERE RptYear = p_year AND RptMonth = p_month
+    GROUP BY CustCode, RptYear, RptMonth, SUBSTRING(ProductCode, 1, 2);
+    
+    SELECT CONCAT('Refreshed ', ROW_COUNT(), ' product records') as message;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `refresh_usual_products`()
+BEGIN
+    TRUNCATE TABLE customer_usual_products;
+    
+    INSERT INTO customer_usual_products (
+        CustCode, ProductCode, product_type, frequency, total_amount, last_purchase_date
+    )
+    SELECT 
+        CustCode,
+        ProductCode,
+        SUBSTRING(ProductCode, 1, 2) as product_type,
+        COUNT(*) as frequency,
+        SUM(TotalNetAmount) as total_amount,
+        MAX(OrderDate) as last_purchase_date
+    FROM orderdetail
+    WHERE OrderDate >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+    GROUP BY CustCode, ProductCode
+    HAVING frequency >= 2;
+    
+    SELECT CONCAT('Refreshed ', ROW_COUNT(), ' usual product records') as message;
+END$$
+DELIMITER ;
+
+
+CALL refresh_all_summary_tables(2025, 10);
+
+
+
+
+CALL refresh_monthly_metrics(2025, 7);
+SELECT 'After refresh_monthly_metrics' as step, COUNT(*) as records FROM customer_monthly_metrics;
+
+-- Test procedure 2: Product Summary
+CALL refresh_product_summary(2025, 7);
+SELECT 'After refresh_product_summary' as step, COUNT(*) as records FROM customer_product_summary;
+
+-- Test procedure 3: Daily Summary
+CALL refresh_daily_summary(2025, 7);
+SELECT 'After refresh_daily_summary' as step, COUNT(*) as records FROM customer_daily_summary;
+
+-- Test procedure 4: Historical Metrics
+CALL refresh_historical_metrics(2025, 7);
+SELECT 'After refresh_historical_metrics' as step, COUNT(*) as records FROM customer_historical_metrics;
+
+-- Test procedure 5: Usual Products
+CALL refresh_usual_products();
+SELECT 'After refresh_usual_products' as step, COUNT(*) as records FROM customer_usual_products;
+
+
+
+
+
+
+CALL refresh_monthly_metrics(2025, 1);
+SELECT 'After refresh_monthly_metrics' as step, COUNT(*) as records FROM customer_monthly_metrics;
+
+-- Test procedure 2: Product Summary
+CALL refresh_product_summary(2025, 1);
+SELECT 'After refresh_product_summary' as step, COUNT(*) as records FROM customer_product_summary;
+
+-- Test procedure 3: Daily Summary
+CALL refresh_daily_summary(2025, 1);
+SELECT 'After refresh_daily_summary' as step, COUNT(*) as records FROM customer_daily_summary;
+
+-- Test procedure 4: Historical Metrics
+CALL refresh_historical_metrics(2025, 1);
+SELECT 'After refresh_historical_metrics' as step, COUNT(*) as records FROM customer_historical_metrics;
+
+-- Test procedure 5: Usual Products
+CALL refresh_usual_products();
+SELECT 'After refresh_usual_products' as step, COUNT(*) as records FROM customer_usual_products;
+
+CALL refresh_monthly_metrics(2025, 2);
+SELECT 'After refresh_monthly_metrics' as step, COUNT(*) as records FROM customer_monthly_metrics;
+
+-- Test procedure 2: Product Summary
+CALL refresh_product_summary(2025, 2);
+SELECT 'After refresh_product_summary' as step, COUNT(*) as records FROM customer_product_summary;
+
+-- Test procedure 3: Daily Summary
+CALL refresh_daily_summary(2025, 2);
+SELECT 'After refresh_daily_summary' as step, COUNT(*) as records FROM customer_daily_summary;
+
+-- Test procedure 4: Historical Metrics
+CALL refresh_historical_metrics(2025, 2);
+SELECT 'After refresh_historical_metrics' as step, COUNT(*) as records FROM customer_historical_metrics;
+
+-- Test procedure 5: Usual Products
+CALL refresh_usual_products();
+SELECT 'After refresh_usual_products' as step, COUNT(*) as records FROM customer_usual_products;
+
+
+
+
+CALL refresh_monthly_metrics(2025, 3);
+SELECT 'After refresh_monthly_metrics' as step, COUNT(*) as records FROM customer_monthly_metrics;
+
+-- Test procedure 2: Product Summary
+CALL refresh_product_summary(2025, 3);
+SELECT 'After refresh_product_summary' as step, COUNT(*) as records FROM customer_product_summary;
+
+-- Test procedure 3: Daily Summary
+CALL refresh_daily_summary(2025, 3);
+SELECT 'After refresh_daily_summary' as step, COUNT(*) as records FROM customer_daily_summary;
+
+-- Test procedure 4: Historical Metrics
+CALL refresh_historical_metrics(2025, 3);
+SELECT 'After refresh_historical_metrics' as step, COUNT(*) as records FROM customer_historical_metrics;
+
+-- Test procedure 5: Usual Products
+CALL refresh_usual_products();
+SELECT 'After refresh_usual_products' as step, COUNT(*) as records FROM customer_usual_products;
+
+
+
+CALL refresh_monthly_metrics(2025, 4);
+SELECT 'After refresh_monthly_metrics' as step, COUNT(*) as records FROM customer_monthly_metrics;
+
+-- Test procedure 2: Product Summary
+CALL refresh_product_summary(2025, 4);
+SELECT 'After refresh_product_summary' as step, COUNT(*) as records FROM customer_product_summary;
+
+-- Test procedure 3: Daily Summary
+CALL refresh_daily_summary(2025, 4);
+SELECT 'After refresh_daily_summary' as step, COUNT(*) as records FROM customer_daily_summary;
+
+-- Test procedure 4: Historical Metrics
+CALL refresh_historical_metrics(2025, 4);
+SELECT 'After refresh_historical_metrics' as step, COUNT(*) as records FROM customer_historical_metrics;
+
+-- Test procedure 5: Usual Products
+CALL refresh_usual_products();
+SELECT 'After refresh_usual_products' as step, COUNT(*) as records FROM customer_usual_products;
+
+
+CALL refresh_monthly_metrics(2025, 5);
+SELECT 'After refresh_monthly_metrics' as step, COUNT(*) as records FROM customer_monthly_metrics;
+
+-- Test procedure 2: Product Summary
+CALL refresh_product_summary(2025, 5);
+SELECT 'After refresh_product_summary' as step, COUNT(*) as records FROM customer_product_summary;
+
+-- Test procedure 3: Daily Summary
+CALL refresh_daily_summary(2025, 5);
+SELECT 'After refresh_daily_summary' as step, COUNT(*) as records FROM customer_daily_summary;
+
+-- Test procedure 4: Historical Metrics
+CALL refresh_historical_metrics(2025, 5);
+SELECT 'After refresh_historical_metrics' as step, COUNT(*) as records FROM customer_historical_metrics;
+
+-- Test procedure 5: Usual Products
+CALL refresh_usual_products();
+SELECT 'After refresh_usual_products' as step, COUNT(*) as records FROM customer_usual_products;
+
+
