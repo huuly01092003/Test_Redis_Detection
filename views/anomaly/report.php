@@ -3,30 +3,7 @@
 $currentPage = 'import';
 require_once dirname(__DIR__) . '/components/navbar.php';renderNavbar($currentPage);
 ?>
-<?php if (isset($_SESSION['info'])): ?>
-    <div class="alert alert-info alert-dismissible">
-        <i class="fas fa-info-circle me-2"></i><?= $_SESSION['info'] ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-    <?php unset($_SESSION['info']); ?>
-<?php endif; ?>
 
-<div class="period-display">
-    <h5>
-        Kỳ báo cáo: <?= $periodDisplay ?>
-        
-        <!-- ⭐ MỚI: Hiển thị nguồn data -->
-        <?php if (isset($dataSource)): ?>
-            <span class="badge bg-light text-dark ms-3">
-                <?php if ($dataSource === 'redis'): ?>
-                    <i class="fas fa-bolt text-warning"></i> Redis Cache
-                <?php elseif ($dataSource === 'summary_table'): ?>
-                    <i class="fas fa-database text-info"></i> Summary Table
-                <?php endif; ?>
-            </span>
-        <?php endif; ?>
-    </h5>
-</div>
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -74,33 +51,47 @@ require_once dirname(__DIR__) . '/components/navbar.php';renderNavbar($currentPa
             background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
             color: white;
             font-weight: 700;
-            padding: 8px 15px;
-            border-radius: 20px;
-            font-size: 0.85rem;
+            padding: 10px 18px;
+            border-radius: 25px;
+            font-size: 0.9rem;
+            display: inline-block;
+            text-align: center;
+            min-width: 180px;
+            box-shadow: 0 3px 10px rgba(220, 53, 69, 0.3);
         }
         .risk-high {
             background: linear-gradient(135deg, #fd7e14 0%, #e8590c 100%);
             color: white;
             font-weight: 600;
-            padding: 6px 12px;
-            border-radius: 20px;
+            padding: 8px 15px;
+            border-radius: 25px;
             font-size: 0.85rem;
+            display: inline-block;
+            text-align: center;
+            min-width: 160px;
+            box-shadow: 0 2px 8px rgba(253, 126, 20, 0.3);
         }
         .risk-medium {
             background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
             color: #000;
             font-weight: 600;
-            padding: 6px 12px;
-            border-radius: 20px;
+            padding: 8px 15px;
+            border-radius: 25px;
             font-size: 0.85rem;
+            display: inline-block;
+            text-align: center;
+            min-width: 140px;
         }
         .risk-low {
             background: linear-gradient(135deg, #20c997 0%, #17a589 100%);
             color: white;
             font-weight: 500;
-            padding: 5px 10px;
+            padding: 6px 12px;
             border-radius: 20px;
             font-size: 0.8rem;
+            display: inline-block;
+            text-align: center;
+            min-width: 120px;
         }
         
         tr.row-critical { background-color: rgba(220, 53, 69, 0.12) !important; }
@@ -311,31 +302,32 @@ require_once dirname(__DIR__) . '/components/navbar.php';renderNavbar($currentPa
         <?php endif; ?>
 
         <?php if (!empty($data)): ?>
-            <div class="row mb-3">
-                <div class="col-12">
-                    <div class="alert alert-success d-flex justify-content-between align-items-center">
-                        <div>
-                            <i class="fas fa-download me-2"></i>
-                            <strong>Export báo cáo:</strong> 
-                            Xuất <?= number_format($summary['total_customers']) ?> khách hàng có dấu hiệu bất thường
-                        </div>
-                        <?php 
-                        $yearsParam = http_build_query(['years' => $selectedYears]);
-                        $monthsParam = http_build_query(['months' => $selectedMonths]);
-                        $exportUrl = "anomaly.php?action=export&{$yearsParam}&{$monthsParam}";
-                        if (!empty($filters['ma_tinh_tp'])) {
-                            $exportUrl .= '&ma_tinh_tp=' . urlencode($filters['ma_tinh_tp']);
-                        }
-                        if (isset($filters['gkhl_status']) && $filters['gkhl_status'] !== '') {
-                            $exportUrl .= '&gkhl_status=' . urlencode($filters['gkhl_status']);
-                        }
-                        ?>
-                        <a href="<?= $exportUrl ?>" class="btn btn-export-anomaly">
-                            <i class="fas fa-file-csv me-2"></i>Export CSV
-                        </a>
-                    </div>
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="alert alert-success d-flex justify-content-between align-items-center">
+                <div>
+                    <i class="fas fa-download me-2"></i>
+                    <strong>Export báo cáo:</strong> 
+                    Xuất <?= number_format($summary['total_customers']) ?> khách hàng có dấu hiệu bất thường
+                    (Hiển thị top 500 ưu tiên critical & high)
                 </div>
+                <?php 
+                $yearsParam = http_build_query(['years' => $selectedYears]);
+                $monthsParam = http_build_query(['months' => $selectedMonths]);
+                $exportUrl = "anomaly.php?action=export&{$yearsParam}&{$monthsParam}";
+                if (!empty($filters['ma_tinh_tp'])) {
+                    $exportUrl .= '&ma_tinh_tp=' . urlencode($filters['ma_tinh_tp']);
+                }
+                if (isset($filters['gkhl_status']) && $filters['gkhl_status'] !== '') {
+                    $exportUrl .= '&gkhl_status=' . urlencode($filters['gkhl_status']);
+                }
+                ?>
+                <a href="<?= $exportUrl ?>" class="btn btn-export-anomaly">
+                    <i class="fas fa-file-csv me-2"></i>Export CSV (Toàn bộ)
+                </a>
             </div>
+        </div>
+    </div>
 
             <div class="row mb-4">
                 <div class="col-md-2">
@@ -372,7 +364,9 @@ require_once dirname(__DIR__) . '/components/navbar.php';renderNavbar($currentPa
 
             <div class="data-card">
                 <h5 class="mb-4">
-                    <i class="fas fa-list-ol me-2"></i>Top 100 Khách hàng có Dấu hiệu Bất thường
+                    <i class="fas fa-list-ol me-2"></i>
+                    Top 500 Khách hàng có Dấu hiệu Bất thường 
+                    <small class="text-muted">(Ưu tiên: Critical → High → Medium → Low)</small>
                 </h5>
                 <div class="table-responsive">
                     <table id="anomalyTable" class="table table-hover table-sm">
@@ -389,6 +383,37 @@ require_once dirname(__DIR__) . '/components/navbar.php';renderNavbar($currentPa
                                 <th>Chi tiết bất thường</th>
                             </tr>
                         </thead>
+                        <div class="alert alert-info mb-3">
+            <i class="fas fa-info-circle me-2"></i>
+            <strong>Phân bổ hiển thị:</strong>
+            <?php
+            $displayCritical = 0;
+            $displayHigh = 0;
+            $displayMedium = 0;
+            $displayLow = 0;
+            foreach ($data as $row) {
+                switch ($row['risk_level']) {
+                    case 'critical': $displayCritical++; break;
+                    case 'high': $displayHigh++; break;
+                    case 'medium': $displayMedium++; break;
+                    case 'low': $displayLow++; break;
+                }
+            }
+            ?>
+            🔴 <strong><?= $displayCritical ?></strong> Critical 
+            | 🟠 <strong><?= $displayHigh ?></strong> High
+            | 🟡 <strong><?= $displayMedium ?></strong> Medium
+            | 🟢 <strong><?= $displayLow ?></strong> Low
+            
+            <?php if ($summary['critical_count'] > $displayCritical || $summary['high_count'] > $displayHigh): ?>
+                <br>
+                <small class="text-warning">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    Một số KH critical/high không hiển thị do giới hạn 500 bản ghi. 
+                    Export CSV để xem toàn bộ <?= number_format($summary['total_customers']) ?> KH.
+                </small>
+            <?php endif; ?>
+        </div>
                         <tbody>
                             <?php foreach ($data as $index => $row): ?>
                                 <tr class="row-<?= $row['risk_level'] ?>">

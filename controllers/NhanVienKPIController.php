@@ -1,6 +1,6 @@
 <?php
 /**
- * ✅ CONTROLLER TỐI ƯU V2 - KPI Nhân Viên với Ngưỡng N
+ * ✅ CONTROLLER TỐI ƯU V2 - KPI Nhân Viên với Ngưỡng N + REDIS NOTIFICATION
  */
 
 require_once 'models/NhanVienKPIModel.php';
@@ -13,6 +13,8 @@ class NhanVienKPIController {
     }
 
     public function showKPIReport() {
+        $startTime = microtime(true); // ✅ Đo thời gian
+        
         $message = '';
         $type = '';
         $kpi_data = [];
@@ -22,7 +24,6 @@ class NhanVienKPIController {
         $available_products = [];
         $has_filtered = false;
         
-        // ✅ NGƯỠNG N MẶC ĐỊNH
         $threshold_n = isset($_GET['threshold_n']) ? intval($_GET['threshold_n']) : 5;
         
         try {
@@ -65,7 +66,6 @@ class NhanVienKPIController {
                 return;
             }
             
-            // User đã submit
             $thang = !empty($_GET['thang']) ? $_GET['thang'] : $available_months[0];
             if (!in_array($thang, $available_months)) $thang = $available_months[0];
             
@@ -88,7 +88,7 @@ class NhanVienKPIController {
                 'threshold_n' => $threshold_n
             ];
             
-            // ✅ LẤY DỮ LIỆU VỚI NGƯỠNG N
+            // ✅ LẤY DỮ LIỆU (sẽ dùng cache nếu có)
             $employees = $this->model->getAllEmployeesWithKPI($tu_ngay, $den_ngay, $product_filter, $threshold_n);
             
             if (empty($employees)) {
@@ -100,7 +100,6 @@ class NhanVienKPIController {
             
             $system_metrics = $this->model->getSystemMetrics($tu_ngay, $den_ngay, $product_filter);
             
-            // Tính toán benchmark
             $emp_count = $system_metrics['emp_count'];
             $total_orders = $system_metrics['total_orders'];
             $total_customers = $system_metrics['total_customers'];
@@ -109,13 +108,11 @@ class NhanVienKPIController {
             $avg_orders_per_emp = $emp_count > 0 ? $total_orders / $emp_count : 0;
             $avg_customers_per_emp = $emp_count > 0 ? $total_customers / $emp_count : 0;
             
-            // Phân loại
             $suspicious_employees = [];
             $warning_employees = [];
             $normal_employees = [];
             
             foreach ($employees as &$emp_kpi) {
-                // Risk reasons
                 $reasons = [];
                 
                 if ($emp_kpi['violation_count'] > 0) {
@@ -136,7 +133,6 @@ class NhanVienKPIController {
                 
                 $emp_kpi['risk_reasons'] = $reasons;
                 
-                // Phân loại
                 if ($emp_kpi['risk_level'] === 'critical') {
                     $suspicious_employees[] = $emp_kpi;
                 } elseif ($emp_kpi['risk_level'] === 'warning') {
@@ -147,7 +143,6 @@ class NhanVienKPIController {
             }
             unset($emp_kpi);
             
-            // Sắp xếp
             usort($suspicious_employees, fn($a, $b) => $b['risk_score'] <=> $a['risk_score']);
             usort($warning_employees, fn($a, $b) => $b['risk_score'] <=> $a['risk_score']);
             usort($normal_employees, fn($a, $b) => $b['risk_score'] <=> $a['risk_score']);
@@ -168,12 +163,20 @@ class NhanVienKPIController {
             
             $kpi_data = array_merge($suspicious_employees, $warning_employees, $normal_employees);
             
+            // ✅ HIỂN THỊ THÔNG BÁO CACHE
+            $duration = round((microtime(true) - $startTime) * 1000, 2);
+            
             if (empty($kpi_data)) {
                 $message = "⚠️ Không có dữ liệu cho khoảng thời gian này.";
                 $type = 'warning';
             } else {
-                $message = "✅ Đã phân tích " . count($kpi_data) . " nhân viên với ngưỡng N={$threshold_n} khách/ngày!";
-                $type = 'success';
+                if ($duration < 200) {
+                    $message = "✅ Dữ liệu từ Cache Redis ({$duration}ms) - Phân tích " . count($kpi_data) . " nhân viên với ngưỡng N={$threshold_n}!";
+                    $type = 'success';
+                } else {
+                    $message = "✅ Dữ liệu từ Database ({$duration}ms) - Phân tích " . count($kpi_data) . " nhân viên với ngưỡng N={$threshold_n}! Lần sau sẽ nhanh hơn.";
+                    $type = 'info';
+                }
             }
             
         } catch (Exception $e) {
@@ -209,3 +212,4 @@ class NhanVienKPIController {
         }
     }
 }
+?>

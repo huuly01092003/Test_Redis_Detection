@@ -1,4 +1,7 @@
 <?php
+if (function_exists('opcache_reset')) {
+    opcache_reset();
+}
 session_start();
 require_once 'controllers/AnomalyController.php';
 require_once 'views/components/navbar.php';

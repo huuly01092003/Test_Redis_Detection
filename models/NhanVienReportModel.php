@@ -1,41 +1,73 @@
 <?php
 /**
- * ✅ MODEL TỐI ƯU - Báo Cáo Doanh Số Nhân Viên
- * ✅ UPDATED: Thêm function lấy chi tiết đơn hàng khách hàng
+ * ✅ MODEL TỐI ƯU - Báo Cáo Doanh Số Nhân Viên + REDIS CACHE
  */
 
 require_once 'config/database.php';
 
 class NhanVienReportModel {
     private $conn;
+    private $redis;
+    
+    private const REDIS_HOST = '127.0.0.1';
+    private const REDIS_PORT = 6379;
+    private const REDIS_TTL = 3600; // 1 giờ
 
     public function __construct() {
         $database = new Database();
         $this->conn = $database->getConnection();
+        $this->connectRedis();
+    }
+    
+    /**
+     * ✅ KẾT NỐI REDIS
+     */
+    private function connectRedis() {
+        try {
+            $this->redis = new Redis();
+            $this->redis->connect(self::REDIS_HOST, self::REDIS_PORT, 2.5);
+            $this->redis->ping();
+        } catch (Exception $e) {
+            error_log("Redis connection failed: " . $e->getMessage());
+            $this->redis = null;
+        }
     }
 
     /**
-     * ✅ LẤY TẤT CẢ DỮ LIỆU NHÂN VIÊN 1 LẦN + TÊN + MÃ GSBH
+     * ✅ LẤY TẤT CẢ NHÂN VIÊN - WITH REDIS CACHE
      */
     public function getAllEmployeesWithStats($tu_ngay, $den_ngay, $thang) {
+        // 1️⃣ Tạo cache key
+        $cacheKey = $this->generateCacheKey('employees', $thang, $tu_ngay, $den_ngay);
+        
+        // 2️⃣ Thử lấy từ Redis
+        if ($this->redis) {
+            try {
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
+            } catch (Exception $e) {
+                error_log("Redis get error: " . $e->getMessage());
+            }
+        }
+        
+        // 3️⃣ Query từ database
         list($year, $month) = explode('-', $thang);
         
         $sql = "SELECT 
                     o.DSRCode,
                     o.DSRTypeProvince,
                     
-                    -- ✅ TÊN NHÂN VIÊN và MÃ GSBH từ bảng DSKH (dùng MAX để tránh duplicate)
                     MAX(nv_info.TenNVBH) as ten_nhan_vien,
                     MAX(nv_info.MaGSBH) as ma_gsbh,
                     
-                    -- TRONG KHOẢNG NGÀY
                     SUM(CASE WHEN DATE(o.OrderDate) >= ? AND DATE(o.OrderDate) <= ? 
                         THEN o.TotalNetAmount ELSE 0 END) as ds_tien_do,
                     COUNT(DISTINCT CASE WHEN DATE(o.OrderDate) >= ? AND DATE(o.OrderDate) <= ? 
                         THEN DATE(o.OrderDate) END) as so_ngay_co_doanh_so_khoang,
                     COALESCE(MAX(ds_khoang.max_daily), 0) as ds_ngay_cao_nhat_nv_khoang,
                     
-                    -- TRONG THÁNG
                     SUM(CASE WHEN o.RptYear = ? AND o.RptMonth = ? 
                         THEN o.TotalNetAmount ELSE 0 END) as ds_tong_thang_nv,
                     COUNT(DISTINCT CASE WHEN o.RptYear = ? AND o.RptMonth = ? 
@@ -44,14 +76,12 @@ class NhanVienReportModel {
                     
                 FROM orderdetail o
                 
-                -- ✅ LEFT JOIN để lấy thông tin nhân viên
                 LEFT JOIN (
                     SELECT DISTINCT MaNVBH, TenNVBH, MaGSBH
                     FROM dskh
                     WHERE MaNVBH IS NOT NULL AND MaNVBH != ''
                 ) nv_info ON o.DSRCode = nv_info.MaNVBH
                 
-                -- LEFT JOIN để lấy max daily cho KHOẢNG
                 LEFT JOIN (
                     SELECT 
                         DSRCode,
@@ -71,7 +101,6 @@ class NhanVienReportModel {
                     GROUP BY DSRCode
                 ) ds_khoang ON o.DSRCode = ds_khoang.DSRCode
                 
-                -- LEFT JOIN để lấy max daily cho THÁNG
                 LEFT JOIN (
                     SELECT 
                         DSRCode,
@@ -103,57 +132,51 @@ class NhanVienReportModel {
         
         $stmt = $this->conn->prepare($sql);
         $stmt->execute([
-            // KHOẢNG NGÀY trong SELECT (4 lần)
             $tu_ngay, $den_ngay,
             $tu_ngay, $den_ngay,
-            
-            // THÁNG trong SELECT (4 lần)
             $year, $month,
             $year, $month,
-            
-            // LEFT JOIN KHOẢNG (2 lần)
             $tu_ngay, $den_ngay,
-            
-            // LEFT JOIN THÁNG (2 lần)
             $year, $month,
-            
-            // WHERE clause (4 lần)
             $tu_ngay, $den_ngay,
             $year, $month
         ]);
         
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    /**
-     * ✅ MỚI: LẤY CHI TIẾT ĐỖN HÀNG CỦA NHÂN VIÊN TRONG KHOẢNG THỜI GIAN
-     */
-    public function getEmployeeOrderDetails($dsr_code, $tu_ngay, $den_ngay) {
-        $sql = "SELECT 
-                    o.OrderNumber as ma_don,
-                    o.OrderDate as ngay_dat,
-                    o.CustCode as ma_kh,
-                    COALESCE(d.TenKH, 'N/A') as ten_kh,
-                    COALESCE(d.DiaChi, '') as dia_chi_kh,
-                    COALESCE(d.Tinh, '') as tinh_kh,
-                    o.TotalNetAmount as so_tien,
-                    o.Qty as so_luong
-                FROM orderdetail o
-                LEFT JOIN dskh d ON o.CustCode = d.MaKH
-                WHERE o.DSRCode = ?
-                AND DATE(o.OrderDate) >= ?
-                AND DATE(o.OrderDate) <= ?
-                ORDER BY o.OrderDate DESC, o.OrderNumber DESC";
+        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        $stmt = $this->conn->prepare($sql);
-        $stmt->execute([$dsr_code, $tu_ngay, $den_ngay]);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // 4️⃣ Lưu vào Redis
+        if ($this->redis && !empty($results)) {
+            try {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($results, JSON_UNESCAPED_UNICODE)
+                );
+            } catch (Exception $e) {
+                error_log("Redis set error: " . $e->getMessage());
+            }
+        }
+        
+        return $results;
     }
 
     /**
-     * ✅ TỔNG THEO THÁNG - 1 QUERY DUY NHẤT
+     * ✅ TỔNG THEO THÁNG - WITH REDIS CACHE
      */
     public function getSystemStatsForMonth($thang) {
+        $cacheKey = "nhanvien:stats:month:{$thang}";
+        
+        if ($this->redis) {
+            try {
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
+            } catch (Exception $e) {
+                error_log("Redis get error: " . $e->getMessage());
+            }
+        }
+        
         list($year, $month) = explode('-', $thang);
         
         $sql = "SELECT 
@@ -161,11 +184,9 @@ class NhanVienReportModel {
                     COUNT(DISTINCT o.DSRCode) as emp_count,
                     DAY(LAST_DAY(CONCAT(?, '-', LPAD(?, 2, '0'), '-01'))) as so_ngay,
                     
-                    -- DS TB/Ngày/Nhân viên
                     COALESCE(SUM(o.TotalNetAmount), 0) / 
                     NULLIF(COUNT(DISTINCT o.DSRCode) * DAY(LAST_DAY(CONCAT(?, '-', LPAD(?, 2, '0'), '-01'))), 0) as ds_tb_chung_thang,
                     
-                    -- DS Ngày Cao Nhất TB
                     AVG(emp_max.max_daily) as ds_ngay_cao_nhat_tb_thang
                     
                 FROM orderdetail o
@@ -190,23 +211,48 @@ class NhanVienReportModel {
         
         $stmt = $this->conn->prepare($sql);
         $stmt->execute([$year, $month, $year, $month, $year, $month, $year, $month]);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($this->redis && !empty($result)) {
+            try {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($result, JSON_UNESCAPED_UNICODE)
+                );
+            } catch (Exception $e) {
+                error_log("Redis set error: " . $e->getMessage());
+            }
+        }
+        
+        return $result;
     }
 
     /**
-     * ✅ TỔNG THEO KHOẢNG - 1 QUERY DUY NHẤT
+     * ✅ TỔNG THEO KHOẢNG - WITH REDIS CACHE
      */
     public function getSystemStatsForRange($tu_ngay, $den_ngay) {
+        $cacheKey = "nhanvien:stats:range:{$tu_ngay}:{$den_ngay}";
+        
+        if ($this->redis) {
+            try {
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
+            } catch (Exception $e) {
+                error_log("Redis get error: " . $e->getMessage());
+            }
+        }
+        
         $sql = "SELECT 
                     COALESCE(SUM(o.TotalNetAmount), 0) as total,
                     COUNT(DISTINCT o.DSRCode) as emp_count,
                     DATEDIFF(?, ?) + 1 as so_ngay,
                     
-                    -- DS TB/Ngày/Nhân viên
                     COALESCE(SUM(o.TotalNetAmount), 0) / 
                     NULLIF(COUNT(DISTINCT o.DSRCode) * (DATEDIFF(?, ?) + 1), 0) as ds_tb_chung_khoang,
                     
-                    -- DS Ngày Cao Nhất TB
                     AVG(emp_max.max_daily) as ds_ngay_cao_nhat_tb_khoang
                     
                 FROM orderdetail o
@@ -236,12 +282,79 @@ class NhanVienReportModel {
             $tu_ngay, $den_ngay,
             $tu_ngay, $den_ngay
         ]);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($this->redis && !empty($result)) {
+            try {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($result, JSON_UNESCAPED_UNICODE)
+                );
+            } catch (Exception $e) {
+                error_log("Redis set error: " . $e->getMessage());
+            }
+        }
+        
+        return $result;
     }
 
     /**
-     * ✅ CÁC HÀM CŨ GIỮ LẠI ĐỂ TƯƠNG THÍCH
+     * ✅ CHI TIẾT ĐƠN HÀNG NHÂN VIÊN
      */
+    public function getEmployeeOrderDetails($dsr_code, $tu_ngay, $den_ngay) {
+        // Không cache chi tiết đơn hàng vì có thể rất nhiều
+        $sql = "SELECT 
+                    o.OrderNumber as ma_don,
+                    o.OrderDate as ngay_dat,
+                    o.CustCode as ma_kh,
+                    COALESCE(d.TenKH, 'N/A') as ten_kh,
+                    COALESCE(d.DiaChi, '') as dia_chi_kh,
+                    COALESCE(d.Tinh, '') as tinh_kh,
+                    o.TotalNetAmount as so_tien,
+                    o.Qty as so_luong
+                FROM orderdetail o
+                LEFT JOIN dskh d ON o.CustCode = d.MaKH
+                WHERE o.DSRCode = ?
+                AND DATE(o.OrderDate) >= ?
+                AND DATE(o.OrderDate) <= ?
+                ORDER BY o.OrderDate DESC, o.OrderNumber DESC";
+        
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute([$dsr_code, $tu_ngay, $den_ngay]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * ✅ GENERATE CACHE KEY
+     */
+    private function generateCacheKey($type, $thang, $tu_ngay, $den_ngay) {
+        return "nhanvien:{$type}:{$thang}:{$tu_ngay}:{$den_ngay}";
+    }
+
+    /**
+     * ✅ XÓA CACHE (gọi từ controller khi cần)
+     */
+    public function clearCache($pattern = 'nhanvien:*') {
+        if (!$this->redis) return false;
+        
+        try {
+            $keys = $this->redis->keys($pattern);
+            if (!empty($keys)) {
+                $this->redis->del($keys);
+                return count($keys);
+            }
+            return 0;
+        } catch (Exception $e) {
+            error_log("Redis clear cache error: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    // ============================================
+    // CÁC HÀM CŨ GIỮ NGUYÊN
+    // ============================================
+
     public function getAvailableMonths() {
         $sql = "SELECT DISTINCT CONCAT(RptYear, '-', LPAD(RptMonth, 2, '0')) as thang
                 FROM orderdetail
@@ -255,7 +368,6 @@ class NhanVienReportModel {
         return $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
     }
 
-    // Deprecated - Không dùng nữa
     public function getTotalByMonth($thang) {
         list($year, $month) = explode('-', $thang);
         $sql = "SELECT COALESCE(SUM(TotalNetAmount), 0) as total

@@ -1,7 +1,6 @@
 <?php
 /**
- * ✅ CONTROLLER TỐI ƯU - Báo Cáo Doanh Số Nhân Viên
- * ✅ UPDATED: Thêm API lấy chi tiết đơn hàng
+ * ✅ CONTROLLER TỐI ƯU - Báo Cáo Doanh Số Nhân Viên + REDIS NOTIFICATION
  */
 
 require_once 'models/NhanVienReportModel.php';
@@ -13,11 +12,7 @@ class NhanVienReportController {
         $this->model = new NhanVienReportModel();
     }
 
-    /**
-     * ✅ MỚI: API LẤY CHI TIẾT ĐƠN HÀNG CỦA NHÂN VIÊN
-     */
     public function getEmployeeOrders() {
-        // ✅ Xóa output buffer trước đó (nếu có)
         if (ob_get_level()) {
             ob_end_clean();
         }
@@ -45,6 +40,8 @@ class NhanVienReportController {
     }
 
     public function showReport() {
+        $startTime = microtime(true); // ✅ Đo thời gian
+        
         $message = '';
         $type = '';
         $report = [];
@@ -64,7 +61,6 @@ class NhanVienReportController {
         $has_filtered = false;
         
         try {
-            // Lấy danh sách tháng
             $available_months = $this->model->getAvailableMonths();
             
             if (empty($available_months)) {
@@ -74,7 +70,6 @@ class NhanVienReportController {
                 return;
             }
             
-            // Kiểm tra xem user đã submit form chưa
             $has_filtered = !empty($_GET['tu_ngay']) && !empty($_GET['den_ngay']);
             
             if (!$has_filtered) {
@@ -83,13 +78,11 @@ class NhanVienReportController {
                 return;
             }
             
-            // ✅ LẤY THÁNG
             $thang = !empty($_GET['thang']) ? $_GET['thang'] : $available_months[0];
             if (!in_array($thang, $available_months)) {
                 $thang = $available_months[0];
             }
             
-            // ✅ LẤY KHOẢNG NGÀY
             $tu_ngay = trim($_GET['tu_ngay']);
             $den_ngay = trim($_GET['den_ngay']);
             
@@ -97,18 +90,16 @@ class NhanVienReportController {
                 list($tu_ngay, $den_ngay) = [$den_ngay, $tu_ngay];
             }
             
-            // Đảm bảo trong tháng
             $thang_start = $thang . '-01';
             $thang_end = date('Y-m-t', strtotime($thang . '-01'));
             
             if (strtotime($tu_ngay) < strtotime($thang_start)) $tu_ngay = $thang_start;
             if (strtotime($den_ngay) > strtotime($thang_end)) $den_ngay = $thang_end;
 
-            // ✅ TÍNH SỐ NGÀY
             $ngay_diff = intval((strtotime($den_ngay) - strtotime($tu_ngay)) / 86400);
             $so_ngay = max(1, $ngay_diff + 1);
 
-            // ✅ LẤY THỐNG KÊ HỆ THỐNG (2 QUERY THAY VÌ HÀNG TRĂM)
+            // ✅ LẤY THỐNG KÊ (sẽ dùng cache nếu có)
             $stats_thang = $this->model->getSystemStatsForMonth($thang);
             $stats_khoang = $this->model->getSystemStatsForRange($tu_ngay, $den_ngay);
             
@@ -118,7 +109,6 @@ class NhanVienReportController {
             $ket_qua_chung = ($tong_tien_ky > 0) ? ($tong_tien_khoang / $tong_tien_ky) : 0;
             $ty_le_nghi_van = $ket_qua_chung * 1.5;
 
-            // ✅ LƯU BENCHMARK
             $tong_tien_ky_detailed = [
                 'ds_tb_chung_khoang' => $stats_khoang['ds_tb_chung_khoang'] ?? 0,
                 'ds_ngay_cao_nhat_tb_khoang' => $stats_khoang['ds_ngay_cao_nhat_tb_khoang'] ?? 0,
@@ -133,7 +123,7 @@ class NhanVienReportController {
                 'so_ngay_trong_thang' => $stats_thang['so_ngay'] ?? 30
             ];
 
-            // ✅ LẤY TẤT CẢ NHÂN VIÊN 1 LẦN (1 QUERY DUY NHẤT)
+            // ✅ LẤY NHÂN VIÊN (sẽ dùng cache nếu có)
             $employees = $this->model->getAllEmployeesWithStats($tu_ngay, $den_ngay, $thang);
 
             if (empty($employees)) {
@@ -143,7 +133,6 @@ class NhanVienReportController {
                 return;
             }
 
-            // ✅ XỬ LÝ DỮ LIỆU (KHÔNG CẦN QUERY THÊM)
             $report_nghi_van = [];
             $report_ok = [];
             
@@ -181,12 +170,10 @@ class NhanVienReportController {
                 }
             }
 
-            // Sắp xếp
             usort($report_nghi_van, function($a, $b) {
                 return $b['ty_le'] <=> $a['ty_le'];
             });
             
-            // Xác định top
             $tong_nghi_van = count($report_nghi_van);
             
             if ($tong_nghi_van >= 20) $top_threshold = 20;
@@ -195,7 +182,6 @@ class NhanVienReportController {
             elseif ($tong_nghi_van >= 5) $top_threshold = 5;
             else $top_threshold = $tong_nghi_van;
             
-            // Thêm rank
             foreach ($report_nghi_van as $key => &$item) {
                 $item['rank'] = $key + 1;
                 $item['highlight_type'] = ($item['rank'] <= $top_threshold) ? 'red' : 'orange';
@@ -210,14 +196,22 @@ class NhanVienReportController {
             
             $report = array_merge($report_nghi_van, $report_ok);
             
-            $debug_info = "Tháng: $thang | Nhân viên: " . count($employees) . " | Nghi vấn: $tong_nghi_van | Top: $top_threshold | Thời gian xử lý: <1s";
+            // ✅ HIỂN THỊ THÔNG BÁO CACHE
+            $duration = round((microtime(true) - $startTime) * 1000, 2);
+            
+            if ($duration < 200) {
+                $message = "✅ Dữ liệu từ Cache Redis ({$duration}ms) - Phân tích " . count($report) . " nhân viên!";
+                $type = 'success';
+            } else {
+                $message = "✅ Dữ liệu từ Database ({$duration}ms) - Phân tích " . count($report) . " nhân viên! Lần sau sẽ nhanh hơn.";
+                $type = 'info';
+            }
+            
+            $debug_info = "Tháng: $thang | Nhân viên: " . count($employees) . " | Nghi vấn: $tong_nghi_van | Top: $top_threshold | Thời gian: {$duration}ms";
             
             if (empty($report)) {
                 $message = "⚠️ Không có dữ liệu cho khoảng thời gian này.";
                 $type = 'warning';
-            } else {
-                $message = "✅ Phân tích thành công " . count($report) . " nhân viên trong <1 giây!";
-                $type = 'success';
             }
             
         } catch (Exception $e) {

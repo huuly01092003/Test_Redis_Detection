@@ -4,6 +4,22 @@ require_once __DIR__ . '/components/navbar.php';
 renderNavbar($currentPage, $periodDisplay ?? '');
 ?>
 
+<?php if (isset($_SESSION['success'])): ?>
+    <div class="alert alert-success alert-dismissible fade show mx-4 mt-3" role="alert">
+        <i class="fas fa-check-circle me-2"></i><?= $_SESSION['success'] ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    <?php unset($_SESSION['success']); ?>
+<?php endif; ?>
+
+<?php if (isset($_SESSION['info'])): ?>
+    <div class="alert alert-info alert-dismissible fade show mx-4 mt-3" role="alert">
+        <i class="fas fa-info-circle me-2"></i><?= $_SESSION['info'] ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    <?php unset($_SESSION['info']); ?>
+<?php endif; ?>
+
 <!DOCTYPE html>
 <html lang="vi">
 <head>

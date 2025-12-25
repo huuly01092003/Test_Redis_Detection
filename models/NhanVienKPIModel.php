@@ -1,51 +1,75 @@
 <?php
 /**
- * ✅ MODEL TỐI ƯU V2 - KPI Nhân Viên với Logic Ngưỡng N
- * Quét từng ngày để phát hiện vi phạm ngưỡng khách/ngày
+ * ✅ MODEL TỐI ƯU V2 - KPI Nhân Viên với Logic Ngưỡng N + REDIS CACHE
  */
 
 require_once 'config/database.php';
 
 class NhanVienKPIModel {
     private $conn;
+    private $redis;
+    
+    private const REDIS_HOST = '127.0.0.1';
+    private const REDIS_PORT = 6379;
+    private const REDIS_TTL = 3600; // 1 giờ
 
     public function __construct() {
         $database = new Database();
         $this->conn = $database->getConnection();
+        $this->connectRedis();
+    }
+    
+    /**
+     * ✅ KẾT NỐI REDIS
+     */
+    private function connectRedis() {
+        try {
+            $this->redis = new Redis();
+            $this->redis->connect(self::REDIS_HOST, self::REDIS_PORT, 2.5);
+            $this->redis->ping();
+        } catch (Exception $e) {
+            error_log("Redis connection failed: " . $e->getMessage());
+            $this->redis = null;
+        }
     }
 
     /**
-     * ✅ LẤY TẤT CẢ NHÂN VIÊN KÈM KPI + THÔNG TIN TỪ DSKH
+     * ✅ LẤY TẤT CẢ NHÂN VIÊN KÈM KPI - WITH REDIS CACHE
      */
     public function getAllEmployeesWithKPI($tu_ngay, $den_ngay, $product_filter = '', $threshold_n = 5) {
-        // Query lấy dữ liệu nhân viên + daily orders + thông tin từ DSKH
+        // 1️⃣ Tạo cache key
+        $cacheKey = $this->generateCacheKey($tu_ngay, $den_ngay, $product_filter, $threshold_n);
+        
+        // 2️⃣ Thử lấy từ Redis
+        if ($this->redis) {
+            try {
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
+            } catch (Exception $e) {
+                error_log("Redis get error: " . $e->getMessage());
+            }
+        }
+        
+        // 3️⃣ Query từ database
         $sql = "SELECT 
                     o.DSRCode,
                     o.DSRTypeProvince,
                     
-                    -- ✅ THÔNG TIN TỪ DSKH (JOIN)
                     MAX(d.TenNVBH) as TenNVBH,
                     MAX(d.MaGSBH) as MaGSBH,
                     
-                    -- Tổng đơn hàng
                     COUNT(DISTINCT o.OrderNumber) as total_orders,
-                    
-                    -- Tổng tiền
                     COALESCE(SUM(o.TotalNetAmount), 0) as total_amount,
-                    
-                    -- Số ngày hoạt động
                     COUNT(DISTINCT DATE(o.OrderDate)) as working_days,
-                    
-                    -- ✅ SỐ KHÁCH HÀNG DISTINCT
                     COUNT(DISTINCT o.CustCode) as total_customers,
                     
-                    -- Lấy từ bảng tạm daily_stats
                     MAX(ds.max_day_orders) as max_day_orders,
                     MAX(ds.max_day_amount) as max_day_amount,
                     MIN(ds.min_day_orders) as min_day_orders,
                     MIN(ds.min_day_amount) as min_day_amount,
                     
-                    -- ✅ MAX/MIN KHÁCH/NGÀY
                     MAX(ds.max_day_customers) as max_day_customers,
                     MIN(ds.min_day_customers) as min_day_customers,
                     
@@ -56,11 +80,9 @@ class NhanVienKPIModel {
                     
                 FROM orderdetail o
                 
-                -- ✅ JOIN VỚI DSKH ĐỂ LẤY TÊN NHÂN VIÊN & MÃ GSBH
                 LEFT JOIN dskh d ON o.DSRCode = d.MaNVBH
                 
                 INNER JOIN (
-                    -- Tính daily stats trong subquery riêng
                     SELECT 
                         DSRCode,
                         MAX(order_count_per_day) as max_day_orders,
@@ -68,7 +90,6 @@ class NhanVienKPIModel {
                         MIN(order_count_per_day) as min_day_orders,
                         MIN(amount_per_day) as min_day_amount,
                         
-                        -- ✅ THÊM MIN/MAX KHÁCH/NGÀY
                         MAX(customer_count_per_day) as max_day_customers,
                         MIN(customer_count_per_day) as min_day_customers,
                         
@@ -118,7 +139,7 @@ class NhanVienKPIModel {
         
         $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Parse daily data và tính toán risk score theo ngưỡng N
+        // Parse daily data và tính toán risk score
         foreach ($results as &$row) {
             $row['daily_orders'] = !empty($row['daily_orders_str']) 
                 ? array_map('intval', explode(',', $row['daily_orders_str'])) 
@@ -127,7 +148,6 @@ class NhanVienKPIModel {
                 ? array_map('floatval', explode(',', $row['daily_amounts_str'])) 
                 : [];
             
-            // ✅ PARSE SỐ KHÁCH/NGÀY
             $row['daily_customers'] = !empty($row['daily_customers_str']) 
                 ? array_map('intval', explode(',', $row['daily_customers_str'])) 
                 : [];
@@ -136,7 +156,6 @@ class NhanVienKPIModel {
                 ? explode(',', $row['daily_dates_str']) 
                 : [];
             
-            // Tính avg
             $row['avg_daily_orders'] = $row['working_days'] > 0 
                 ? round($row['total_orders'] / $row['working_days'], 2) 
                 : 0;
@@ -144,7 +163,6 @@ class NhanVienKPIModel {
                 ? round($row['total_amount'] / $row['working_days'], 0) 
                 : 0;
             
-            // ✅ TB KHÁCH/NGÀY
             $row['avg_daily_customers'] = $row['working_days'] > 0 
                 ? round($row['total_customers'] / $row['working_days'], 2) 
                 : 0;
@@ -156,7 +174,6 @@ class NhanVienKPIModel {
             $row['violation_days'] = $row['risk_analysis']['violation_days'];
             $row['violation_count'] = $row['risk_analysis']['violation_count'];
             
-            // Tên nhân viên
             $row['ten_nv'] = !empty($row['TenNVBH']) ? $row['TenNVBH'] : 'NV_' . $row['DSRCode'];
             
             unset($row['daily_orders_str']);
@@ -165,12 +182,24 @@ class NhanVienKPIModel {
             unset($row['daily_dates_str']);
         }
         
+        // 4️⃣ Lưu vào Redis
+        if ($this->redis && !empty($results)) {
+            try {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($results, JSON_UNESCAPED_UNICODE)
+                );
+            } catch (Exception $e) {
+                error_log("Redis set error: " . $e->getMessage());
+            }
+        }
+        
         return $results;
     }
 
     /**
-     * ✅ HÀM MỚI: PHÂN TÍCH RISK DỰA TRÊN NGƯỠNG N
-     * Quét từng ngày để tìm vi phạm
+     * ✅ PHÂN TÍCH RISK DỰA TRÊN NGƯỠNG N
      */
     private function analyzeRiskByThreshold($daily_customers, $threshold_n, $daily_dates = []) {
         $violation_days = [];
@@ -193,11 +222,9 @@ class NhanVienKPIModel {
             }
         }
         
-        // Tính risk score dựa trên số ngày vi phạm và mức độ vi phạm
         $total_days = count($daily_customers);
         $violation_rate = $total_days > 0 ? ($violation_count / $total_days) * 100 : 0;
         
-        // Logic tính điểm
         $risk_score = 0;
         
         // Dựa trên tỷ lệ ngày vi phạm
@@ -271,7 +298,7 @@ class NhanVienKPIModel {
     }
 
     /**
-     * ✅ LẤY CHI TIẾT KHÁCH HÀNG CỦA NHÂN VIÊN
+     * ✅ LẤY CHI TIẾT KHÁCH HÀNG - KHÔNG CACHE (dynamic)
      */
     public function getEmployeeCustomerDetails($dsr_code, $tu_ngay, $den_ngay, $product_filter = '') {
         $sql = "SELECT 
@@ -327,9 +354,22 @@ class NhanVienKPIModel {
     }
 
     /**
-     * ✅ LẤY THỐNG KÊ HỆ THỐNG
+     * ✅ LẤY THỐNG KÊ HỆ THỐNG - WITH REDIS CACHE
      */
     public function getSystemMetrics($tu_ngay, $den_ngay, $product_filter = '') {
+        $cacheKey = "nhanvien:kpi:metrics:{$tu_ngay}:{$den_ngay}:" . md5($product_filter);
+        
+        if ($this->redis) {
+            try {
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
+            } catch (Exception $e) {
+                error_log("Redis get error: " . $e->getMessage());
+            }
+        }
+        
         $sql = "SELECT 
                     COUNT(DISTINCT o.DSRCode) as emp_count,
                     COUNT(DISTINCT o.OrderNumber) as total_orders,
@@ -372,12 +412,54 @@ class NhanVienKPIModel {
         $stmt = $this->conn->prepare($sql);
         $stmt->execute($params);
         
-        return $stmt->fetch(PDO::FETCH_ASSOC);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($this->redis && !empty($result)) {
+            try {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($result, JSON_UNESCAPED_UNICODE)
+                );
+            } catch (Exception $e) {
+                error_log("Redis set error: " . $e->getMessage());
+            }
+        }
+        
+        return $result;
     }
 
     /**
-     * Lấy danh sách tháng có sẵn
+     * ✅ GENERATE CACHE KEY
      */
+    private function generateCacheKey($tu_ngay, $den_ngay, $product_filter, $threshold_n) {
+        $productHash = !empty($product_filter) ? md5($product_filter) : 'all';
+        return "nhanvien:kpi:N{$threshold_n}:{$tu_ngay}:{$den_ngay}:{$productHash}";
+    }
+
+    /**
+     * ✅ XÓA CACHE
+     */
+    public function clearCache($pattern = 'nhanvien:kpi:*') {
+        if (!$this->redis) return false;
+        
+        try {
+            $keys = $this->redis->keys($pattern);
+            if (!empty($keys)) {
+                $this->redis->del($keys);
+                return count($keys);
+            }
+            return 0;
+        } catch (Exception $e) {
+            error_log("Redis clear cache error: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    // ============================================
+    // CÁC HÀM CŨ GIỮ NGUYÊN
+    // ============================================
+
     public function getAvailableMonths() {
         $sql = "SELECT DISTINCT CONCAT(RptYear, '-', LPAD(RptMonth, 2, '0')) as thang
                 FROM orderdetail
@@ -389,9 +471,6 @@ class NhanVienKPIModel {
         return $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
     }
 
-    /**
-     * Lấy danh sách nhóm sản phẩm
-     */
     public function getAvailableProducts() {
         $sql = "SELECT DISTINCT SUBSTRING(ProductCode, 1, 2) as product_prefix
                 FROM orderdetail 
@@ -404,3 +483,4 @@ class NhanVienKPIModel {
         return $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
     }
 }
+?>

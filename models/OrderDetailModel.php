@@ -1,16 +1,360 @@
 <?php
 require_once 'config/database.php';
+require_once 'models/DynamicCacheKeyGenerator.php'; // ✅ Sử dụng lại generator từ Anomaly
 
 class OrderDetailModel {
     private $conn;
+    private $redis;
     private $table = "orderdetail";
+    
     private const PAGE_SIZE = 100;
     private const BATCH_SIZE = 500;
+    private const REDIS_HOST = '127.0.0.1';
+    private const REDIS_PORT = 6379;
+    private const REDIS_TTL = 3600; // ✅ 1 giờ cho báo cáo thường (ngắn hơn anomaly)
 
     public function __construct() {
         $database = new Database();
         $this->conn = $database->getConnection();
+        $this->connectRedis();
     }
+    
+    /**
+     * ✅ KẾT NỐI REDIS
+     */
+    private function connectRedis() {
+        try {
+            $this->redis = new Redis();
+            $this->redis->connect(self::REDIS_HOST, self::REDIS_PORT, 2.5);
+            $this->redis->ping();
+        } catch (Exception $e) {
+            error_log("Redis connection failed: " . $e->getMessage());
+            $this->redis = null;
+        }
+    }
+
+    /**
+     * ✅ GET CUSTOMER SUMMARY - WITH REDIS CACHE
+     */
+    public function getCustomerSummary($years = [], $months = [], $filters = []) {
+        // 1️⃣ Tạo cache key
+        $cacheKey = $this->generateReportCacheKey('summary', $years, $months, $filters);
+        
+        // 2️⃣ Thử lấy từ Redis
+        if ($this->redis) {
+            try {
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
+            } catch (Exception $e) {
+                error_log("Redis get error: " . $e->getMessage());
+            }
+        }
+        
+        // 3️⃣ Query từ database
+        $sql = "SELECT 
+                    o.CustCode as ma_khach_hang,
+                    d.TenKH as ten_khach_hang,
+                    d.DiaChi as dia_chi_khach_hang,
+                    d.Tinh as ma_tinh_tp,
+                    d.LoaiKH as loai_kh,
+                    SUM(o.Qty) as total_san_luong,
+                    SUM(o.TotalGrossAmount) as total_doanh_so_truoc_ck,
+                    SUM(o.TotalSchemeAmount) as total_chiet_khau,
+                    SUM(o.TotalNetAmount) as total_doanh_so,
+                    MAX(CASE WHEN g.MaKHDMS IS NOT NULL THEN 1 ELSE 0 END) AS has_gkhl
+                FROM {$this->table} o
+                LEFT JOIN dskh d ON o.CustCode = d.MaKH
+                LEFT JOIN gkhl g ON g.MaKHDMS = o.CustCode
+                WHERE 1=1";
+        
+        $params = [];
+        
+        if (!empty($years)) {
+            $placeholders = [];
+            foreach ($years as $idx => $year) {
+                $key = ":year_$idx";
+                $placeholders[] = $key;
+                $params[$key] = $year;
+            }
+            $sql .= " AND o.RptYear IN (" . implode(',', $placeholders) . ")";
+        }
+        
+        if (!empty($months)) {
+            $placeholders = [];
+            foreach ($months as $idx => $month) {
+                $key = ":month_$idx";
+                $placeholders[] = $key;
+                $params[$key] = $month;
+            }
+            $sql .= " AND o.RptMonth IN (" . implode(',', $placeholders) . ")";
+        }
+        
+        if (!empty($filters['ma_tinh_tp'])) {
+            $sql .= " AND d.Tinh = :ma_tinh_tp";
+            $params[':ma_tinh_tp'] = $filters['ma_tinh_tp'];
+        }
+        
+        if (!empty($filters['ma_khach_hang'])) {
+            $sql .= " AND o.CustCode LIKE :ma_khach_hang";
+            $params[':ma_khach_hang'] = '%' . $filters['ma_khach_hang'] . '%';
+        }
+        
+        if (isset($filters['gkhl_status']) && $filters['gkhl_status'] !== '') {
+            if ($filters['gkhl_status'] == '1') {
+                $sql .= " AND g.MaKHDMS IS NOT NULL";
+            } else {
+                $sql .= " AND g.MaKHDMS IS NULL";
+            }
+        }
+        
+        $sql .= " GROUP BY o.CustCode, d.TenKH, d.DiaChi, d.Tinh, d.LoaiKH
+                  ORDER BY total_doanh_so DESC
+                  LIMIT " . self::PAGE_SIZE;
+        
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute($params);
+        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // 4️⃣ Lưu vào Redis
+        if ($this->redis && !empty($results)) {
+            try {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($results, JSON_UNESCAPED_UNICODE)
+                );
+            } catch (Exception $e) {
+                error_log("Redis set error: " . $e->getMessage());
+            }
+        }
+        
+        return $results;
+    }
+
+    /**
+     * ✅ GET SUMMARY STATS - WITH REDIS CACHE
+     */
+    public function getSummaryStats($years = [], $months = [], $filters = []) {
+        // 1️⃣ Tạo cache key
+        $cacheKey = $this->generateReportCacheKey('stats', $years, $months, $filters);
+        
+        // 2️⃣ Thử lấy từ Redis
+        if ($this->redis) {
+            try {
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
+            } catch (Exception $e) {
+                error_log("Redis get error: " . $e->getMessage());
+            }
+        }
+        
+        // 3️⃣ Query từ database
+        $sql = "SELECT 
+                    COUNT(DISTINCT o.CustCode) as total_khach_hang,
+                    COALESCE(SUM(o.TotalNetAmount), 0) as total_doanh_so,
+                    COALESCE(SUM(o.Qty), 0) as total_san_luong,
+                    COUNT(DISTINCT g.MaKHDMS) as total_gkhl
+                FROM {$this->table} o
+                LEFT JOIN dskh d ON o.CustCode = d.MaKH
+                LEFT JOIN gkhl g ON g.MaKHDMS = o.CustCode
+                WHERE 1=1";
+        
+        $params = [];
+        
+        if (!empty($years)) {
+            $placeholders = [];
+            foreach ($years as $idx => $year) {
+                $key = ":year_$idx";
+                $placeholders[] = $key;
+                $params[$key] = $year;
+            }
+            $sql .= " AND o.RptYear IN (" . implode(',', $placeholders) . ")";
+        }
+        
+        if (!empty($months)) {
+            $placeholders = [];
+            foreach ($months as $idx => $month) {
+                $key = ":month_$idx";
+                $placeholders[] = $key;
+                $params[$key] = $month;
+            }
+            $sql .= " AND o.RptMonth IN (" . implode(',', $placeholders) . ")";
+        }
+        
+        if (!empty($filters['ma_tinh_tp'])) {
+            $sql .= " AND d.Tinh = :ma_tinh_tp";
+            $params[':ma_tinh_tp'] = $filters['ma_tinh_tp'];
+        }
+        
+        if (!empty($filters['ma_khach_hang'])) {
+            $sql .= " AND o.CustCode LIKE :ma_khach_hang";
+            $params[':ma_khach_hang'] = '%' . $filters['ma_khach_hang'] . '%';
+        }
+        
+        if (isset($filters['gkhl_status']) && $filters['gkhl_status'] !== '') {
+            if ($filters['gkhl_status'] === '1') {
+                $sql .= " AND g.MaKHDMS IS NOT NULL";
+            } elseif ($filters['gkhl_status'] === '0') {
+                $sql .= " AND g.MaKHDMS IS NULL";
+            }
+        }
+        
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute($params);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // 4️⃣ Lưu vào Redis
+        if ($this->redis && !empty($result)) {
+            try {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($result, JSON_UNESCAPED_UNICODE)
+                );
+            } catch (Exception $e) {
+                error_log("Redis set error: " . $e->getMessage());
+            }
+        }
+        
+        return $result;
+    }
+
+    /**
+     * ✅ GET CUSTOMER DETAIL - WITH REDIS CACHE
+     */
+    public function getCustomerDetail($custCode, $years = [], $months = []) {
+        // 1️⃣ Tạo cache key
+        $cacheKey = $this->generateDetailCacheKey($custCode, $years, $months);
+        
+        // 2️⃣ Thử lấy từ Redis
+        if ($this->redis) {
+            try {
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
+            } catch (Exception $e) {
+                error_log("Redis get error: " . $e->getMessage());
+            }
+        }
+        
+        // 3️⃣ Query từ database
+        $sql = "SELECT 
+                    o.*,
+                    d.TenKH, d.DiaChi, d.Tinh, d.MaSoThue,
+                    d.MaGSBH, d.Area, d.PhanLoaiNhomKH, d.LoaiKH,
+                    d.QuanHuyen, d.MaNPP, d.MaNVBH, d.TenNVBH
+                FROM {$this->table} o
+                LEFT JOIN dskh d ON o.CustCode = d.MaKH
+                WHERE o.CustCode = :cust_code";
+        
+        $params = [':cust_code' => $custCode];
+        
+        if (!empty($years)) {
+            $placeholders = [];
+            foreach ($years as $idx => $year) {
+                $key = ":year_$idx";
+                $placeholders[] = $key;
+                $params[$key] = $year;
+            }
+            $sql .= " AND o.RptYear IN (" . implode(',', $placeholders) . ")";
+        }
+        
+        if (!empty($months)) {
+            $placeholders = [];
+            foreach ($months as $idx => $month) {
+                $key = ":month_$idx";
+                $placeholders[] = $key;
+                $params[$key] = $month;
+            }
+            $sql .= " AND o.RptMonth IN (" . implode(',', $placeholders) . ")";
+        }
+        
+        $sql .= " ORDER BY o.OrderDate DESC";
+        
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute($params);
+        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // 4️⃣ Lưu vào Redis (TTL ngắn hơn vì detail thay đổi nhiều)
+        if ($this->redis && !empty($results)) {
+            try {
+                $this->redis->setex(
+                    $cacheKey, 
+                    1800, // 30 phút cho detail
+                    json_encode($results, JSON_UNESCAPED_UNICODE)
+                );
+            } catch (Exception $e) {
+                error_log("Redis set error: " . $e->getMessage());
+            }
+        }
+        
+        return $results;
+    }
+
+    /**
+     * ✅ GENERATE CACHE KEY CHO REPORT SUMMARY/STATS
+     */
+    private function generateReportCacheKey($type, $years, $months, $filters) {
+        $filtersForKey = [
+            'years' => $years,
+            'months' => $months,
+            'ma_tinh_tp' => $filters['ma_tinh_tp'] ?? '',
+            'gkhl_status' => $filters['gkhl_status'] ?? ''
+        ];
+        
+        // ✅ Bỏ ma_khach_hang khỏi cache key vì nó là search dynamic
+        // Nếu có ma_khach_hang thì không cache
+        if (!empty($filters['ma_khach_hang'])) {
+            return null; // Không cache khi search theo mã KH
+        }
+        
+        // Sử dụng lại DynamicCacheKeyGenerator từ Anomaly
+        $baseKey = DynamicCacheKeyGenerator::generate($filtersForKey);
+        
+        // Thay prefix: anomaly:report -> report:summary hoặc report:stats
+        return str_replace('anomaly:report', "report:$type", $baseKey);
+    }
+
+    /**
+     * ✅ GENERATE CACHE KEY CHO CUSTOMER DETAIL
+     */
+    private function generateDetailCacheKey($custCode, $years, $months) {
+        $yearStr = empty($years) ? 'all' : 'y' . implode('_', $years);
+        $monthStr = empty($months) ? 'all' : 'm' . implode('_', $months);
+        
+        return "report:detail:{$custCode}:{$yearStr}:{$monthStr}";
+    }
+
+    /**
+     * ✅ XÓA CACHE (dùng khi import data mới)
+     */
+    public function clearReportCache() {
+        if (!$this->redis) return false;
+        
+        try {
+            $pattern = 'report:*';
+            $keys = $this->redis->keys($pattern);
+            
+            if (!empty($keys)) {
+                $this->redis->del($keys);
+                return count($keys);
+            }
+            
+            return 0;
+        } catch (Exception $e) {
+            error_log("Redis clear cache error: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    // ============================================
+    // CÁC HÀM CŨ GIỮ NGUYÊN
+    // ============================================
 
     public function importCSV($filePath) {
         try {
@@ -41,7 +385,6 @@ class OrderDetailModel {
             $stmt = $this->conn->prepare($sql);
             if (!$stmt) {
                 return ['success' => false, 'error' => 'Lỗi prepare SQL: ' . implode(' | ', $this->conn->errorInfo())];
-
             }
 
             while (($line = fgets($handle)) !== false) {
@@ -124,12 +467,16 @@ class OrderDetailModel {
 
             $this->conn->commit();
             
+            // ✅ XÓA CACHE SAU KHI IMPORT
+            $clearedKeys = $this->clearReportCache();
+            
             return [
                 'success' => true, 
                 'inserted' => $insertedCount,
                 'skipped' => $skippedCount,
                 'errors' => $errorCount,
-                'total_lines' => $lineCount
+                'total_lines' => $lineCount,
+                'cache_cleared' => $clearedKeys
             ];
         } catch (Exception $e) {
             if (isset($handle)) fclose($handle);
@@ -138,173 +485,6 @@ class OrderDetailModel {
         }
     }
 
-    // ✅ TỐI ƯU: Thay subquery EXISTS bằng LEFT JOIN + GROUP BY có điều kiện
-    // ✅ CẬP NHẬT: Hỗ trợ filter theo nhiều năm và nhiều tháng
-    public function getCustomerSummary($years = [], $months = [], $filters = []) {
-        $sql = "SELECT 
-                    o.CustCode as ma_khach_hang,
-                    d.TenKH as ten_khach_hang,
-                    d.DiaChi as dia_chi_khach_hang,
-                    d.Tinh as ma_tinh_tp,
-                    d.LoaiKH as loai_kh,
-                    SUM(o.Qty) as total_san_luong,
-                    SUM(o.TotalGrossAmount) as total_doanh_so_truoc_ck,
-                    SUM(o.TotalSchemeAmount) as total_chiet_khau,
-                    SUM(o.TotalNetAmount) as total_doanh_so,
-                    MAX(CASE WHEN g.MaKHDMS IS NOT NULL THEN 1 ELSE 0 END) AS has_gkhl
-                FROM {$this->table} o
-                LEFT JOIN dskh d ON o.CustCode = d.MaKH
-                LEFT JOIN gkhl g ON g.MaKHDMS = o.CustCode
-                WHERE 1=1";
-        
-        $params = [];
-        
-        // Filter theo năm (có thể nhiều năm)
-        if (!empty($years)) {
-            $placeholders = [];
-            foreach ($years as $idx => $year) {
-                $key = ":year_$idx";
-                $placeholders[] = $key;
-                $params[$key] = $year;
-            }
-            $sql .= " AND o.RptYear IN (" . implode(',', $placeholders) . ")";
-        }
-        
-        // Filter theo tháng (có thể nhiều tháng)
-        if (!empty($months)) {
-            $placeholders = [];
-            foreach ($months as $idx => $month) {
-                $key = ":month_$idx";
-                $placeholders[] = $key;
-                $params[$key] = $month;
-            }
-            $sql .= " AND o.RptMonth IN (" . implode(',', $placeholders) . ")";
-        }
-        
-        if (!empty($filters['ma_tinh_tp'])) {
-            $sql .= " AND d.Tinh = :ma_tinh_tp";
-            $params[':ma_tinh_tp'] = $filters['ma_tinh_tp'];
-        }
-        
-        if (!empty($filters['ma_khach_hang'])) {
-            $sql .= " AND o.CustCode LIKE :ma_khach_hang";
-            $params[':ma_khach_hang'] = '%' . $filters['ma_khach_hang'] . '%';
-        }
-        
-        if (isset($filters['gkhl_status']) && $filters['gkhl_status'] !== '') {
-            if ($filters['gkhl_status'] == '1') {
-                $sql .= " AND g.MaKHDMS IS NOT NULL";
-            } else {
-                $sql .= " AND g.MaKHDMS IS NULL";
-            }
-        }
-        
-        $sql .= " GROUP BY o.CustCode, d.TenKH, d.DiaChi, d.Tinh, d.LoaiKH
-                  ORDER BY total_doanh_so DESC
-                  LIMIT " . self::PAGE_SIZE;
-        
-        $stmt = $this->conn->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    // ✅ TỐI ƯU: Query summary đơn giản hơn
-    public function getSummaryStats($years = [], $months = [], $filters = []) {
-        $sql = "SELECT 
-                    COUNT(DISTINCT o.CustCode) as total_khach_hang,
-                    COALESCE(SUM(o.TotalNetAmount), 0) as total_doanh_so,
-                    COALESCE(SUM(o.Qty), 0) as total_san_luong,
-                    COUNT(DISTINCT g.MaKHDMS) as total_gkhl
-                FROM {$this->table} o
-                LEFT JOIN dskh d ON o.CustCode = d.MaKH
-                LEFT JOIN gkhl g ON g.MaKHDMS = o.CustCode
-                WHERE 1=1";
-        
-        $params = [];
-        
-        if (!empty($years)) {
-            $placeholders = [];
-            foreach ($years as $idx => $year) {
-                $key = ":year_$idx";
-                $placeholders[] = $key;
-                $params[$key] = $year;
-            }
-            $sql .= " AND o.RptYear IN (" . implode(',', $placeholders) . ")";
-        }
-        
-        if (!empty($months)) {
-            $placeholders = [];
-            foreach ($months as $idx => $month) {
-                $key = ":month_$idx";
-                $placeholders[] = $key;
-                $params[$key] = $month;
-            }
-            $sql .= " AND o.RptMonth IN (" . implode(',', $placeholders) . ")";
-        }
-        
-        if (!empty($filters['ma_tinh_tp'])) {
-            $sql .= " AND d.Tinh = :ma_tinh_tp";
-            $params[':ma_tinh_tp'] = $filters['ma_tinh_tp'];
-        }
-        
-        if (!empty($filters['ma_khach_hang'])) {
-            $sql .= " AND o.CustCode LIKE :ma_khach_hang";
-            $params[':ma_khach_hang'] = '%' . $filters['ma_khach_hang'] . '%';
-        }
-        
-        if (isset($filters['gkhl_status']) && $filters['gkhl_status'] !== '') {
-            if ($filters['gkhl_status'] === '1') {
-                $sql .= " AND g.MaKHDMS IS NOT NULL";
-            } elseif ($filters['gkhl_status'] === '0') {
-                $sql .= " AND g.MaKHDMS IS NULL";
-            }
-        }
-        
-        $stmt = $this->conn->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
-    }
-
-    public function getCustomerDetail($custCode, $years = [], $months = []) {
-        $sql = "SELECT 
-                    o.*,
-                    d.TenKH, d.DiaChi, d.Tinh, d.MaSoThue,
-                    d.MaGSBH, d.Area, d.PhanLoaiNhomKH, d.LoaiKH,
-                    d.QuanHuyen, d.MaNPP, d.MaNVBH, d.TenNVBH
-                FROM {$this->table} o
-                LEFT JOIN dskh d ON o.CustCode = d.MaKH
-                WHERE o.CustCode = :cust_code";
-        
-        $params = [':cust_code' => $custCode];
-        
-        if (!empty($years)) {
-            $placeholders = [];
-            foreach ($years as $idx => $year) {
-                $key = ":year_$idx";
-                $placeholders[] = $key;
-                $params[$key] = $year;
-            }
-            $sql .= " AND o.RptYear IN (" . implode(',', $placeholders) . ")";
-        }
-        
-        if (!empty($months)) {
-            $placeholders = [];
-            foreach ($months as $idx => $month) {
-                $key = ":month_$idx";
-                $placeholders[] = $key;
-                $params[$key] = $month;
-            }
-            $sql .= " AND o.RptMonth IN (" . implode(',', $placeholders) . ")";
-        }
-        
-        $sql .= " ORDER BY o.OrderDate DESC";
-        
-        $stmt = $this->conn->prepare($sql);
-        $stmt->execute($params);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    // ✅ TỐI ƯU: Giới hạn 24 tháng gần nhất
     public function getMonthYears() {
         $sql = "SELECT DISTINCT 
                     CONCAT(RptMonth, '/', RptYear) as thang_nam
@@ -317,7 +497,6 @@ class OrderDetailModel {
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }
 
-    // ✅ CẬP NHẬT: Lấy tỉnh mới từ dskh (join với orderdetail)
     public function getProvinces() {
         $sql = "SELECT DISTINCT d.Tinh 
                 FROM dskh d
@@ -328,6 +507,7 @@ class OrderDetailModel {
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }
+    
     public function getCustomerLocation($custCode) {
         $sql = "SELECT Location FROM dskh WHERE MaKH = :ma_kh LIMIT 1";
         $stmt = $this->conn->prepare($sql);
@@ -409,7 +589,6 @@ class OrderDetailModel {
         return null;
     }
 
-     // ✅ MỚI: Lấy danh sách năm có sẵn
     public function getAvailableYears() {
         $sql = "SELECT DISTINCT RptYear 
                 FROM {$this->table}
@@ -420,7 +599,6 @@ class OrderDetailModel {
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }
 
-    // ✅ MỚI: Lấy danh sách tháng (1-12)
     public function getAvailableMonths() {
         return range(1, 12);
     }

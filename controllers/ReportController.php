@@ -12,6 +12,8 @@ class ReportController {
     }
 
     public function index() {
+        $startTime = microtime(true); // ✅ Đo thời gian
+        
         $selectedYears = isset($_GET['years']) ? (array)$_GET['years'] : [];
         $selectedMonths = isset($_GET['months']) ? (array)$_GET['months'] : [];
         
@@ -39,6 +41,15 @@ class ReportController {
         if (!empty($selectedYears) && !empty($selectedMonths)) {
             $data = $this->model->getCustomerSummary($selectedYears, $selectedMonths, $filters);
             $summary = $this->model->getSummaryStats($selectedYears, $selectedMonths, $filters);
+            
+            // ✅ HIỂN THỊ THÔNG BÁO CACHE
+            $duration = round((microtime(true) - $startTime) * 1000, 2);
+            
+            if ($duration < 100) {
+                $_SESSION['success'] = "✅ Dữ liệu từ Cache Redis ({$duration}ms) - Cực nhanh!";
+            } else {
+                $_SESSION['info'] = "✅ Dữ liệu từ Database ({$duration}ms) - Lần sau sẽ nhanh hơn!";
+            }
         }
 
         $periodDisplay = $this->generatePeriodDisplay($selectedYears, $selectedMonths);
@@ -47,6 +58,8 @@ class ReportController {
     }
 
     public function detail() {
+        $startTime = microtime(true); // ✅ Đo thời gian
+        
         $maKhachHang = $_GET['ma_khach_hang'] ?? '';
         $selectedYears = isset($_GET['years']) ? (array)$_GET['years'] : [];
         $selectedMonths = isset($_GET['months']) ? (array)$_GET['months'] : [];
@@ -63,10 +76,19 @@ class ReportController {
         $location = $this->model->getCustomerLocation($maKhachHang);
         $gkhlInfo = $this->model->getGkhlInfo($maKhachHang);
         
-        // ✅ THÊM MỚI: Lấy thông tin bất thường
+        // ✅ Lấy thông tin bất thường
         $anomalyInfo = $this->anomalyModel->getCustomerAnomalyDetail($maKhachHang, $selectedYears, $selectedMonths);
         
         $periodDisplay = $this->generatePeriodDisplay($selectedYears, $selectedMonths);
+        
+        // ✅ HIỂN THỊ THÔNG BÁO CACHE
+        $duration = round((microtime(true) - $startTime) * 1000, 2);
+        
+        if ($duration < 50) {
+            $_SESSION['success'] = "✅ Chi tiết từ Cache ({$duration}ms)";
+        } else {
+            $_SESSION['info'] = "✅ Chi tiết từ Database ({$duration}ms)";
+        }
         
         require_once 'views/detail.php';
     }
