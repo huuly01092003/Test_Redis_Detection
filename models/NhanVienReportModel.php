@@ -1,6 +1,7 @@
 <?php
 /**
- * ✅ MODEL TỐI ƯU - Báo Cáo Doanh Số Nhân Viên + REDIS CACHE
+ * ✅ MODEL TỐI ƯU - Báo Cáo Doanh Số Nhân Viên + REDIS CACHE + DB BACKUP
+ * Compatible với bảng summary_nhanvien_report_cache có sẵn
  */
 
 require_once 'config/database.php';
@@ -34,7 +35,7 @@ class NhanVienReportModel {
     }
 
     /**
-     * ✅ LẤY TẤT CẢ NHÂN VIÊN - WITH REDIS CACHE
+     * ✅ LẤY TẤT CẢ NHÂN VIÊN - WITH REDIS CACHE + DB BACKUP
      */
     public function getAllEmployeesWithStats($tu_ngay, $den_ngay, $thang) {
         // 1️⃣ Tạo cache key
@@ -52,7 +53,14 @@ class NhanVienReportModel {
             }
         }
         
-        // 3️⃣ Query từ database
+        // 3️⃣ Thử lấy từ Database backup
+        $dbResults = $this->getFromSummaryTable($cacheKey, 'employees');
+        if (!empty($dbResults)) {
+            $this->populateRedisFromDB($cacheKey, $dbResults);
+            return $dbResults;
+        }
+        
+        // 4️⃣ Query từ database chính
         list($year, $month) = explode('-', $thang);
         
         $sql = "SELECT 
@@ -144,28 +152,21 @@ class NhanVienReportModel {
         
         $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // 4️⃣ Lưu vào Redis
-        if ($this->redis && !empty($results)) {
-            try {
-                $this->redis->setex(
-                    $cacheKey, 
-                    self::REDIS_TTL, 
-                    json_encode($results, JSON_UNESCAPED_UNICODE)
-                );
-            } catch (Exception $e) {
-                error_log("Redis set error: " . $e->getMessage());
-            }
+        // 5️⃣ Lưu vào cache (Redis + Database)
+        if (!empty($results)) {
+            $this->saveCache($cacheKey, $results, $tu_ngay, $den_ngay, $thang, 'employees');
         }
         
         return $results;
     }
 
     /**
-     * ✅ TỔNG THEO THÁNG - WITH REDIS CACHE
+     * ✅ TỔNG THEO THÁNG - WITH REDIS CACHE + DB BACKUP
      */
     public function getSystemStatsForMonth($thang) {
         $cacheKey = "nhanvien:stats:month:{$thang}";
         
+        // Thử lấy từ Redis
         if ($this->redis) {
             try {
                 $cached = $this->redis->get($cacheKey);
@@ -177,8 +178,18 @@ class NhanVienReportModel {
             }
         }
         
+        // Thử lấy từ Database backup
         list($year, $month) = explode('-', $thang);
+        $firstDay = "$thang-01";
+        $lastDay = date('Y-m-t', strtotime($firstDay));
         
+        $dbResults = $this->getFromSummaryTable($cacheKey, 'stats_month', $firstDay, $lastDay, $thang);
+        if (!empty($dbResults)) {
+            $this->populateRedisFromDB($cacheKey, $dbResults);
+            return $dbResults;
+        }
+        
+        // Query từ database chính
         $sql = "SELECT 
                     COALESCE(SUM(o.TotalNetAmount), 0) as total,
                     COUNT(DISTINCT o.DSRCode) as emp_count,
@@ -213,27 +224,21 @@ class NhanVienReportModel {
         $stmt->execute([$year, $month, $year, $month, $year, $month, $year, $month]);
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        if ($this->redis && !empty($result)) {
-            try {
-                $this->redis->setex(
-                    $cacheKey, 
-                    self::REDIS_TTL, 
-                    json_encode($result, JSON_UNESCAPED_UNICODE)
-                );
-            } catch (Exception $e) {
-                error_log("Redis set error: " . $e->getMessage());
-            }
+        // Lưu vào cache
+        if (!empty($result)) {
+            $this->saveCache($cacheKey, $result, $firstDay, $lastDay, $thang, 'stats_month');
         }
         
         return $result;
     }
 
     /**
-     * ✅ TỔNG THEO KHOẢNG - WITH REDIS CACHE
+     * ✅ TỔNG THEO KHOẢNG - WITH REDIS CACHE + DB BACKUP
      */
     public function getSystemStatsForRange($tu_ngay, $den_ngay) {
         $cacheKey = "nhanvien:stats:range:{$tu_ngay}:{$den_ngay}";
         
+        // Thử lấy từ Redis
         if ($this->redis) {
             try {
                 $cached = $this->redis->get($cacheKey);
@@ -245,6 +250,14 @@ class NhanVienReportModel {
             }
         }
         
+        // Thử lấy từ Database backup
+        $dbResults = $this->getFromSummaryTable($cacheKey, 'stats_range', $tu_ngay, $den_ngay);
+        if (!empty($dbResults)) {
+            $this->populateRedisFromDB($cacheKey, $dbResults);
+            return $dbResults;
+        }
+        
+        // Query từ database chính
         $sql = "SELECT 
                     COALESCE(SUM(o.TotalNetAmount), 0) as total,
                     COUNT(DISTINCT o.DSRCode) as emp_count,
@@ -284,26 +297,120 @@ class NhanVienReportModel {
         ]);
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        if ($this->redis && !empty($result)) {
-            try {
-                $this->redis->setex(
-                    $cacheKey, 
-                    self::REDIS_TTL, 
-                    json_encode($result, JSON_UNESCAPED_UNICODE)
-                );
-            } catch (Exception $e) {
-                error_log("Redis set error: " . $e->getMessage());
-            }
+        // Lưu vào cache
+        if (!empty($result)) {
+            $this->saveCache($cacheKey, $result, $tu_ngay, $den_ngay, '', 'stats_range');
         }
         
         return $result;
     }
 
     /**
+     * ✅ LẤY TỪ DATABASE BACKUP TABLE
+     * Compatible với cấu trúc: cache_key, data_type, thang, tu_ngay, den_ngay
+     */
+    private function getFromSummaryTable($cacheKey, $dataType, $tu_ngay = null, $den_ngay = null, $thang = null) {
+        try {
+            $sql = "SELECT data FROM summary_nhanvien_report_cache 
+                    WHERE cache_key = ? AND data_type = ? LIMIT 1";
+            
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute([$cacheKey, $dataType]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($row && !empty($row['data'])) {
+                return json_decode($row['data'], true);
+            }
+        } catch (Exception $e) {
+            error_log("Report database backup fetch error: " . $e->getMessage());
+        }
+        
+        return null;
+    }
+
+    /**
+     * ✅ LƯU CACHE (REDIS + DATABASE)
+     * Compatible với cấu trúc bảng có sẵn
+     */
+    private function saveCache($cacheKey, $data, $tu_ngay, $den_ngay, $thang, $dataType) {
+        try {
+            // 1️⃣ Lưu Redis
+            if ($this->redis) {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($data, JSON_UNESCAPED_UNICODE)
+                );
+            }
+            
+            // 2️⃣ Tính toán metrics
+            $employeeCount = 0;
+            $suspectCount = 0;
+            
+            if ($dataType === 'employees' && is_array($data)) {
+                $employeeCount = count($data);
+                // Suspect: nhân viên có doanh số cao bất thường
+                foreach ($data as $emp) {
+                    $avgDaily = isset($emp['so_ngay_co_doanh_so_khoang']) && $emp['so_ngay_co_doanh_so_khoang'] > 0
+                        ? $emp['ds_tien_do'] / $emp['so_ngay_co_doanh_so_khoang']
+                        : 0;
+                    $maxDaily = $emp['ds_ngay_cao_nhat_nv_khoang'] ?? 0;
+                    
+                    // Đánh dấu suspect nếu doanh số ngày cao nhất > 3x trung bình
+                    if ($maxDaily > $avgDaily * 3 && $avgDaily > 0) {
+                        $suspectCount++;
+                    }
+                }
+            }
+            
+            // 3️⃣ Lưu Database
+            $sql = "INSERT INTO summary_nhanvien_report_cache 
+                    (cache_key, thang, tu_ngay, den_ngay, data_type, data, employee_count, suspect_count)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE 
+                    data = VALUES(data),
+                    employee_count = VALUES(employee_count),
+                    suspect_count = VALUES(suspect_count),
+                    calculated_at = CURRENT_TIMESTAMP";
+            
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute([
+                $cacheKey,
+                $thang ?: date('Y-m', strtotime($tu_ngay)),
+                $tu_ngay,
+                $den_ngay,
+                $dataType,
+                json_encode($data, JSON_UNESCAPED_UNICODE),
+                $employeeCount,
+                $suspectCount
+            ]);
+            
+        } catch (Exception $e) {
+            error_log("Save report cache error: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * ✅ POPULATE REDIS FROM DATABASE
+     */
+    private function populateRedisFromDB($cacheKey, $data) {
+        if (!$this->redis) return;
+        
+        try {
+            $this->redis->setex(
+                $cacheKey, 
+                self::REDIS_TTL, 
+                json_encode($data, JSON_UNESCAPED_UNICODE)
+            );
+        } catch (Exception $e) {
+            error_log("Report Redis populate error: " . $e->getMessage());
+        }
+    }
+
+    /**
      * ✅ CHI TIẾT ĐƠN HÀNG NHÂN VIÊN
      */
     public function getEmployeeOrderDetails($dsr_code, $tu_ngay, $den_ngay) {
-        // Không cache chi tiết đơn hàng vì có thể rất nhiều
         $sql = "SELECT 
                     o.OrderNumber as ma_don,
                     o.OrderDate as ngay_dat,
@@ -333,21 +440,60 @@ class NhanVienReportModel {
     }
 
     /**
-     * ✅ XÓA CACHE (gọi từ controller khi cần)
+     * ✅ XÓA CACHE (Redis + Database)
      */
     public function clearCache($pattern = 'nhanvien:*') {
-        if (!$this->redis) return false;
+        $deletedCount = 0;
         
-        try {
-            $keys = $this->redis->keys($pattern);
-            if (!empty($keys)) {
-                $this->redis->del($keys);
-                return count($keys);
+        // 1️⃣ Xóa Redis
+        if ($this->redis) {
+            try {
+                $keys = $this->redis->keys($pattern);
+                if (!empty($keys)) {
+                    $this->redis->del($keys);
+                    $deletedCount = count($keys);
+                }
+            } catch (Exception $e) {
+                error_log("Redis clear cache error: " . $e->getMessage());
             }
-            return 0;
+        }
+        
+        // 2️⃣ Xóa Database cache cũ (giữ lại 24 giờ gần nhất)
+        try {
+            $sql = "DELETE FROM summary_nhanvien_report_cache 
+                    WHERE calculated_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)";
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
         } catch (Exception $e) {
-            error_log("Redis clear cache error: " . $e->getMessage());
-            return false;
+            error_log("Database cache cleanup error: " . $e->getMessage());
+        }
+        
+        return $deletedCount;
+    }
+
+    /**
+     * ✅ XEM TỔNG QUAN CACHE
+     */
+    public function getCacheStatistics() {
+        try {
+            $sql = "SELECT 
+                        data_type,
+                        COUNT(*) as total_records,
+                        SUM(employee_count) as total_employees,
+                        SUM(suspect_count) as total_suspects,
+                        MIN(calculated_at) as oldest_cache,
+                        MAX(calculated_at) as newest_cache,
+                        ROUND(SUM(LENGTH(data)) / 1024 / 1024, 2) as data_size_mb
+                    FROM summary_nhanvien_report_cache
+                    GROUP BY data_type
+                    ORDER BY data_type";
+            
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute();
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e) {
+            error_log("Get cache statistics error: " . $e->getMessage());
+            return [];
         }
     }
 

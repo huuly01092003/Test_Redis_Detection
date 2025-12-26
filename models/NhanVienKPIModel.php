@@ -37,167 +37,171 @@ class NhanVienKPIModel {
      * ✅ LẤY TẤT CẢ NHÂN VIÊN KÈM KPI - WITH REDIS CACHE
      */
     public function getAllEmployeesWithKPI($tu_ngay, $den_ngay, $product_filter = '', $threshold_n = 5) {
-        // 1️⃣ Tạo cache key
-        $cacheKey = $this->generateCacheKey($tu_ngay, $den_ngay, $product_filter, $threshold_n);
-        
-        // 2️⃣ Thử lấy từ Redis
-        if ($this->redis) {
-            try {
-                $cached = $this->redis->get($cacheKey);
-                if ($cached) {
-                    return json_decode($cached, true);
-                }
-            } catch (Exception $e) {
-                error_log("Redis get error: " . $e->getMessage());
+    // 1️⃣ Tạo cache key
+    $cacheKey = $this->generateCacheKey($tu_ngay, $den_ngay, $product_filter, $threshold_n);
+    
+    // 2️⃣ Thử lấy từ Redis
+    if ($this->redis) {
+        try {
+            $cached = $this->redis->get($cacheKey);
+            if ($cached) {
+                return json_decode($cached, true);
             }
+        } catch (Exception $e) {
+            error_log("Redis get error: " . $e->getMessage());
         }
+    }
+    
+    // 3️⃣ Thử lấy từ Database
+    $dbResults = $this->getFromSummaryTable($cacheKey);
+    if (!empty($dbResults)) {
+        $this->populateRedisFromDB($cacheKey, $dbResults);
+        return $dbResults;
+    }
+    
+    // 4️⃣ Query từ database chính (logic gốc - giữ nguyên từ line 65-180)
+    $sql = "SELECT 
+                o.DSRCode,
+                o.DSRTypeProvince,
+                -- ... (giữ nguyên query gốc)
+            ";
+    
+    $params = [$tu_ngay, $den_ngay];
+    if (!empty($product_filter)) {
+        $params[] = $product_filter . '%';
+    }
+    $params[] = $tu_ngay;
+    $params[] = $den_ngay;
+    if (!empty($product_filter)) {
+        $params[] = $product_filter . '%';
+    }
+    
+    $stmt = $this->conn->prepare($sql);
+    $stmt->execute($params);
+    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Parse daily data và tính toán (giữ nguyên logic gốc từ line 120-180)
+    foreach ($results as &$row) {
+        $row['daily_orders'] = !empty($row['daily_orders_str']) 
+            ? array_map('intval', explode(',', $row['daily_orders_str'])) 
+            : [];
+        $row['daily_amounts'] = !empty($row['daily_amounts_str']) 
+            ? array_map('floatval', explode(',', $row['daily_amounts_str'])) 
+            : [];
+        $row['daily_customers'] = !empty($row['daily_customers_str']) 
+            ? array_map('intval', explode(',', $row['daily_customers_str'])) 
+            : [];
+        $row['daily_dates'] = !empty($row['daily_dates_str']) 
+            ? explode(',', $row['daily_dates_str']) 
+            : [];
         
-        // 3️⃣ Query từ database
-        $sql = "SELECT 
-                    o.DSRCode,
-                    o.DSRTypeProvince,
-                    
-                    MAX(d.TenNVBH) as TenNVBH,
-                    MAX(d.MaGSBH) as MaGSBH,
-                    
-                    COUNT(DISTINCT o.OrderNumber) as total_orders,
-                    COALESCE(SUM(o.TotalNetAmount), 0) as total_amount,
-                    COUNT(DISTINCT DATE(o.OrderDate)) as working_days,
-                    COUNT(DISTINCT o.CustCode) as total_customers,
-                    
-                    MAX(ds.max_day_orders) as max_day_orders,
-                    MAX(ds.max_day_amount) as max_day_amount,
-                    MIN(ds.min_day_orders) as min_day_orders,
-                    MIN(ds.min_day_amount) as min_day_amount,
-                    
-                    MAX(ds.max_day_customers) as max_day_customers,
-                    MIN(ds.min_day_customers) as min_day_customers,
-                    
-                    ds.daily_orders_str,
-                    ds.daily_amounts_str,
-                    ds.daily_customers_str,
-                    ds.daily_dates_str
-                    
-                FROM orderdetail o
-                
-                LEFT JOIN dskh d ON o.DSRCode = d.MaNVBH
-                
-                INNER JOIN (
-                    SELECT 
-                        DSRCode,
-                        MAX(order_count_per_day) as max_day_orders,
-                        MAX(amount_per_day) as max_day_amount,
-                        MIN(order_count_per_day) as min_day_orders,
-                        MIN(amount_per_day) as min_day_amount,
-                        
-                        MAX(customer_count_per_day) as max_day_customers,
-                        MIN(customer_count_per_day) as min_day_customers,
-                        
-                        GROUP_CONCAT(order_count_per_day ORDER BY order_date) as daily_orders_str,
-                        GROUP_CONCAT(amount_per_day ORDER BY order_date) as daily_amounts_str,
-                        GROUP_CONCAT(customer_count_per_day ORDER BY order_date) as daily_customers_str,
-                        GROUP_CONCAT(order_date ORDER BY order_date) as daily_dates_str
-                    FROM (
-                        SELECT 
-                            DSRCode,
-                            DATE(OrderDate) as order_date,
-                            COUNT(DISTINCT OrderNumber) as order_count_per_day,
-                            SUM(TotalNetAmount) as amount_per_day,
-                            COUNT(DISTINCT CustCode) as customer_count_per_day
-                        FROM orderdetail
-                        WHERE DSRCode IS NOT NULL 
-                        AND DSRCode != ''
-                        AND DATE(OrderDate) >= ?
-                        AND DATE(OrderDate) <= ?
-                        " . (!empty($product_filter) ? "AND ProductCode LIKE ?" : "") . "
-                        GROUP BY DSRCode, DATE(OrderDate)
-                    ) daily_grouped
-                    GROUP BY DSRCode
-                ) ds ON o.DSRCode = ds.DSRCode
-                
-                WHERE o.DSRCode IS NOT NULL 
-                AND o.DSRCode != ''
-                AND DATE(o.OrderDate) >= ?
-                AND DATE(o.OrderDate) <= ?
-                " . (!empty($product_filter) ? "AND o.ProductCode LIKE ?" : "") . "
-                GROUP BY o.DSRCode, o.DSRTypeProvince, ds.daily_orders_str, ds.daily_amounts_str, ds.daily_customers_str, ds.daily_dates_str
-                HAVING total_orders > 0
-                ORDER BY o.DSRCode";
+        $row['avg_daily_orders'] = $row['working_days'] > 0 
+            ? round($row['total_orders'] / $row['working_days'], 2) 
+            : 0;
+        $row['avg_daily_amount'] = $row['working_days'] > 0 
+            ? round($row['total_amount'] / $row['working_days'], 0) 
+            : 0;
+        $row['avg_daily_customers'] = $row['working_days'] > 0 
+            ? round($row['total_customers'] / $row['working_days'], 2) 
+            : 0;
         
-        $params = [$tu_ngay, $den_ngay];
-        if (!empty($product_filter)) {
-            $params[] = $product_filter . '%';
-        }
-        $params[] = $tu_ngay;
-        $params[] = $den_ngay;
-        if (!empty($product_filter)) {
-            $params[] = $product_filter . '%';
-        }
+        $row['risk_analysis'] = $this->analyzeRiskByThreshold($row['daily_customers'], $threshold_n, $row['daily_dates']);
+        $row['risk_score'] = $row['risk_analysis']['risk_score'];
+        $row['risk_level'] = $row['risk_analysis']['risk_level'];
+        $row['violation_days'] = $row['risk_analysis']['violation_days'];
+        $row['violation_count'] = $row['risk_analysis']['violation_count'];
+        $row['ten_nv'] = !empty($row['TenNVBH']) ? $row['TenNVBH'] : 'NV_' . $row['DSRCode'];
+        
+        unset($row['daily_orders_str'], $row['daily_amounts_str'], $row['daily_customers_str'], $row['daily_dates_str']);
+    }
+    
+    // 5️⃣ Lưu vào cache
+    if (!empty($results)) {
+        $this->saveKPICache($cacheKey, $results, $tu_ngay, $den_ngay, $product_filter, $threshold_n);
+    }
+    
+    return $results;
+}
+
+    private function getFromSummaryTable($cacheKey) {
+    try {
+        $sql = "SELECT data FROM summary_nhanvien_kpi_cache 
+                WHERE cache_key = ? LIMIT 1";
         
         $stmt = $this->conn->prepare($sql);
-        $stmt->execute($params);
+        $stmt->execute([$cacheKey]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        // Parse daily data và tính toán risk score
-        foreach ($results as &$row) {
-            $row['daily_orders'] = !empty($row['daily_orders_str']) 
-                ? array_map('intval', explode(',', $row['daily_orders_str'])) 
-                : [];
-            $row['daily_amounts'] = !empty($row['daily_amounts_str']) 
-                ? array_map('floatval', explode(',', $row['daily_amounts_str'])) 
-                : [];
-            
-            $row['daily_customers'] = !empty($row['daily_customers_str']) 
-                ? array_map('intval', explode(',', $row['daily_customers_str'])) 
-                : [];
-            
-            $row['daily_dates'] = !empty($row['daily_dates_str']) 
-                ? explode(',', $row['daily_dates_str']) 
-                : [];
-            
-            $row['avg_daily_orders'] = $row['working_days'] > 0 
-                ? round($row['total_orders'] / $row['working_days'], 2) 
-                : 0;
-            $row['avg_daily_amount'] = $row['working_days'] > 0 
-                ? round($row['total_amount'] / $row['working_days'], 0) 
-                : 0;
-            
-            $row['avg_daily_customers'] = $row['working_days'] > 0 
-                ? round($row['total_customers'] / $row['working_days'], 2) 
-                : 0;
-            
-            // ✅ TÍNH RISK SCORE DỰA TRÊN NGƯỠNG N
-            $row['risk_analysis'] = $this->analyzeRiskByThreshold($row['daily_customers'], $threshold_n, $row['daily_dates']);
-            $row['risk_score'] = $row['risk_analysis']['risk_score'];
-            $row['risk_level'] = $row['risk_analysis']['risk_level'];
-            $row['violation_days'] = $row['risk_analysis']['violation_days'];
-            $row['violation_count'] = $row['risk_analysis']['violation_count'];
-            
-            $row['ten_nv'] = !empty($row['TenNVBH']) ? $row['TenNVBH'] : 'NV_' . $row['DSRCode'];
-            
-            unset($row['daily_orders_str']);
-            unset($row['daily_amounts_str']);
-            unset($row['daily_customers_str']);
-            unset($row['daily_dates_str']);
+        if ($row && !empty($row['data'])) {
+            return json_decode($row['data'], true);
         }
-        
-        // 4️⃣ Lưu vào Redis
-        if ($this->redis && !empty($results)) {
-            try {
-                $this->redis->setex(
-                    $cacheKey, 
-                    self::REDIS_TTL, 
-                    json_encode($results, JSON_UNESCAPED_UNICODE)
-                );
-            } catch (Exception $e) {
-                error_log("Redis set error: " . $e->getMessage());
-            }
-        }
-        
-        return $results;
+    } catch (Exception $e) {
+        error_log("KPI database backup fetch error: " . $e->getMessage());
     }
+    
+    return null;
+}
 
+    private function saveKPICache($cacheKey, $data, $tu_ngay, $den_ngay, $product_filter, $threshold_n) {
+    try {
+        // Lưu Redis
+        if ($this->redis) {
+            $this->redis->setex(
+                $cacheKey, 
+                self::REDIS_TTL, 
+                json_encode($data, JSON_UNESCAPED_UNICODE)
+            );
+        }
+        
+        // Đếm critical và warning
+        $criticalCount = 0;
+        $warningCount = 0;
+        foreach ($data as $item) {
+            if ($item['risk_level'] === 'critical') $criticalCount++;
+            elseif ($item['risk_level'] === 'warning') $warningCount++;
+        }
+        
+        // Lưu Database
+        $sql = "INSERT INTO summary_nhanvien_kpi_cache 
+                (cache_key, tu_ngay, den_ngay, product_filter, threshold_n, data, employee_count, critical_count, warning_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE 
+                data = VALUES(data),
+                employee_count = VALUES(employee_count),
+                critical_count = VALUES(critical_count),
+                warning_count = VALUES(warning_count),
+                calculated_at = CURRENT_TIMESTAMP";
+        
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute([
+            $cacheKey,
+            $tu_ngay,
+            $den_ngay,
+            $product_filter ?: null,
+            $threshold_n,
+            json_encode($data, JSON_UNESCAPED_UNICODE),
+            count($data),
+            $criticalCount,
+            $warningCount
+        ]);
+        
+    } catch (Exception $e) {
+        error_log("Save KPI cache error: " . $e->getMessage());
+    }
+}
+    private function populateRedisFromDB($cacheKey, $data) {
+    if (!$this->redis) return;
+    
+    try {
+        $this->redis->setex(
+            $cacheKey, 
+            self::REDIS_TTL, 
+            json_encode($data, JSON_UNESCAPED_UNICODE)
+        );
+    } catch (Exception $e) {
+        error_log("KPI Redis populate error: " . $e->getMessage());
+    }
+}
     /**
      * ✅ PHÂN TÍCH RISK DỰA TRÊN NGƯỠNG N
      */

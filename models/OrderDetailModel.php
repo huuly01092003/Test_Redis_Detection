@@ -40,6 +40,11 @@ class OrderDetailModel {
         // 1️⃣ Tạo cache key
         $cacheKey = $this->generateReportCacheKey('summary', $years, $months, $filters);
         
+        if (!$cacheKey) {
+            // Không cache search động (ma_khach_hang)
+            return $this->queryCustomerSummary($years, $months, $filters);
+        }
+        
         // 2️⃣ Thử lấy từ Redis
         if ($this->redis) {
             try {
@@ -52,7 +57,77 @@ class OrderDetailModel {
             }
         }
         
-        // 3️⃣ Query từ database
+        // 3️⃣ Thử lấy từ Database Backup
+        $dbResults = $this->getFromSummaryTable($cacheKey, 'summary');
+        if (!empty($dbResults)) {
+            // Repopulate Redis
+            $this->populateRedisFromDB($cacheKey, $dbResults);
+            return $dbResults;
+        }
+        
+        // 4️⃣ Query từ database chính
+        $results = $this->queryCustomerSummary($years, $months, $filters);
+        
+        // 5️⃣ Lưu vào cả Redis và Database
+        if (!empty($results)) {
+            $this->saveSummaryCache($cacheKey, 'summary', $results, $years, $months, $filters);
+        }
+        
+        return $results;
+    }
+    private function saveSummaryCache($cacheKey, $dataType, $data, $years, $months, $filters) {
+        try {
+            // Lưu vào Redis
+            if ($this->redis) {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($data, JSON_UNESCAPED_UNICODE)
+                );
+            }
+            
+            // Lưu vào Database
+            $sql = "INSERT INTO summary_report_cache 
+                    (cache_key, data_type, data, filters, record_count, calculated_for_years, calculated_for_months)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE 
+                    data = VALUES(data),
+                    record_count = VALUES(record_count),
+                    calculated_at = CURRENT_TIMESTAMP";
+            
+            $recordCount = is_array($data) ? count($data) : 0;
+            
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute([
+                $cacheKey,
+                $dataType,
+                json_encode($data, JSON_UNESCAPED_UNICODE),
+                json_encode($filters, JSON_UNESCAPED_UNICODE),
+                $recordCount,
+                implode(',', $years),
+                implode(',', $months)
+            ]);
+            
+        } catch (Exception $e) {
+            error_log("Save summary cache error: " . $e->getMessage());
+        }
+    }
+
+    private function populateRedisFromDB($cacheKey, $data) {
+        if (!$this->redis) return;
+        
+        try {
+            $this->redis->setex(
+                $cacheKey, 
+                self::REDIS_TTL, 
+                json_encode($data, JSON_UNESCAPED_UNICODE)
+            );
+        } catch (Exception $e) {
+            error_log("Redis populate error: " . $e->getMessage());
+        }
+    }
+
+    private function queryCustomerSummary($years, $months, $filters) {
         $sql = "SELECT 
                     o.CustCode as ma_khach_hang,
                     d.TenKH as ten_khach_hang,
@@ -115,44 +190,10 @@ class OrderDetailModel {
         
         $stmt = $this->conn->prepare($sql);
         $stmt->execute($params);
-        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        // 4️⃣ Lưu vào Redis
-        if ($this->redis && !empty($results)) {
-            try {
-                $this->redis->setex(
-                    $cacheKey, 
-                    self::REDIS_TTL, 
-                    json_encode($results, JSON_UNESCAPED_UNICODE)
-                );
-            } catch (Exception $e) {
-                error_log("Redis set error: " . $e->getMessage());
-            }
-        }
-        
-        return $results;
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    /**
-     * ✅ GET SUMMARY STATS - WITH REDIS CACHE
-     */
-    public function getSummaryStats($years = [], $months = [], $filters = []) {
-        // 1️⃣ Tạo cache key
-        $cacheKey = $this->generateReportCacheKey('stats', $years, $months, $filters);
-        
-        // 2️⃣ Thử lấy từ Redis
-        if ($this->redis) {
-            try {
-                $cached = $this->redis->get($cacheKey);
-                if ($cached) {
-                    return json_decode($cached, true);
-                }
-            } catch (Exception $e) {
-                error_log("Redis get error: " . $e->getMessage());
-            }
-        }
-        
-        // 3️⃣ Query từ database
+    private function querySummaryStats($years, $months, $filters) {
         $sql = "SELECT 
                     COUNT(DISTINCT o.CustCode) as total_khach_hang,
                     COALESCE(SUM(o.TotalNetAmount), 0) as total_doanh_so,
@@ -205,24 +246,68 @@ class OrderDetailModel {
         
         $stmt = $this->conn->prepare($sql);
         $stmt->execute($params);
-        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+    /**
+     * ✅ GET SUMMARY STATS - WITH REDIS CACHE
+     */
+    public function getSummaryStats($years = [], $months = [], $filters = []) {
+        // 1️⃣ Tạo cache key
+        $cacheKey = $this->generateReportCacheKey('stats', $years, $months, $filters);
         
-        // 4️⃣ Lưu vào Redis
-        if ($this->redis && !empty($result)) {
+        if (!$cacheKey) {
+            return $this->querySummaryStats($years, $months, $filters);
+        }
+        
+        // 2️⃣ Thử Redis
+        if ($this->redis) {
             try {
-                $this->redis->setex(
-                    $cacheKey, 
-                    self::REDIS_TTL, 
-                    json_encode($result, JSON_UNESCAPED_UNICODE)
-                );
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
             } catch (Exception $e) {
-                error_log("Redis set error: " . $e->getMessage());
+                error_log("Redis get error: " . $e->getMessage());
             }
+        }
+        
+        // 3️⃣ Thử Database
+        $dbResults = $this->getFromSummaryTable($cacheKey, 'stats');
+        if (!empty($dbResults)) {
+            $this->populateRedisFromDB($cacheKey, $dbResults);
+            return $dbResults;
+        }
+        
+        // 4️⃣ Query
+        $result = $this->querySummaryStats($years, $months, $filters);
+        
+        // 5️⃣ Save
+        if (!empty($result)) {
+            $this->saveSummaryCache($cacheKey, 'stats', $result, $years, $months, $filters);
         }
         
         return $result;
     }
 
+     private function getFromSummaryTable($cacheKey, $dataType) {
+        try {
+            $sql = "SELECT data FROM summary_report_cache 
+                    WHERE cache_key = ? AND data_type = ?
+                    LIMIT 1";
+            
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute([$cacheKey, $dataType]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($row && !empty($row['data'])) {
+                return json_decode($row['data'], true);
+            }
+        } catch (Exception $e) {
+            error_log("Database backup fetch error: " . $e->getMessage());
+        }
+        
+        return null;
+    }
     /**
      * ✅ GET CUSTOMER DETAIL - WITH REDIS CACHE
      */
