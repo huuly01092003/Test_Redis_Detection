@@ -9,6 +9,12 @@ function renderEnhancedNavbar($currentPage = '', $additionalInfo = []) {
     // Get current path for active state detection
     $currentPath = $_SERVER['PHP_SELF'];
     $baseName = basename($currentPath, '.php');
+    
+    // Load auth middleware
+    require_once __DIR__ . '/../../middleware/AuthMiddleware.php';
+    $currentUser = AuthMiddleware::getCurrentUser();
+    $isAdmin = AuthMiddleware::getCurrentRole() === 'admin' && !AuthMiddleware::isSwitchedRole();
+    $isSwitched = AuthMiddleware::isSwitchedRole();
 ?>
 <nav class="navbar navbar-expand-lg navbar-custom navbar-dark sticky-top shadow-lg">
     <div class="container-fluid">
@@ -337,4 +343,6 @@ function renderNavbar($currentPage = '', $thangNam = '') {
     // Call the new enhanced function
     renderEnhancedNavbar($currentPage, $additionalInfo);
 }
+
+
 ?>
