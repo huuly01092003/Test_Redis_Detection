@@ -1,7 +1,7 @@
 <?php
 /**
  * ============================================
- * AUTHENTICATION MIDDLEWARE
+ * AUTHENTICATION MIDDLEWARE - FIXED VERSION
  * ============================================
  */
 
@@ -17,7 +17,7 @@ class AuthMiddleware {
         
         if (!isset($_SESSION['user_id'])) {
             $_SESSION['redirect_after_login'] = $_SERVER['REQUEST_URI'];
-            header('Location: /login.php');
+            header('Location: login.php');
             exit;
         }
         
@@ -25,7 +25,7 @@ class AuthMiddleware {
         if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 1800)) {
             self::logout();
             $_SESSION['error'] = 'Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.';
-            header('Location: /login.php');
+            header('Location: login.php');
             exit;
         }
         
@@ -131,7 +131,7 @@ class AuthMiddleware {
     private static function accessDenied() {
         http_response_code(403);
         $_SESSION['error'] = 'Bạn không có quyền truy cập trang này.';
-        header('Location: /dashboard.php');
+        header('Location: dashboard.php');
         exit;
     }
     
@@ -220,6 +220,20 @@ function isLoggedIn() {
  */
 function isAdmin() {
     return AuthMiddleware::getCurrentRole() === 'admin' && !AuthMiddleware::isSwitchedRole();
+}
+
+/**
+ * Quick check if user is a regular user
+ */
+function isUser() {
+    return AuthMiddleware::getCurrentRole() === 'user';
+}
+
+/**
+ * Quick check if user is viewer
+ */
+function isViewer() {
+    return AuthMiddleware::getCurrentRole() === 'viewer';
 }
 
 /**

@@ -36,13 +36,13 @@ function renderEnhancedNavbar($currentPage = '', $additionalInfo = []) {
             <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                 <!-- Import Section -->
                 <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle <?= in_array($baseName, ['index', 'dskh', 'gkhl']) ? 'active' : '' ?>" 
+                    <a class="nav-link dropdown-toggle <?= in_array($baseName, ['import', 'dskh', 'gkhl']) ? 'active' : '' ?>" 
                        href="#" role="button" data-bs-toggle="dropdown">
                         <i class="fas fa-upload me-1"></i>Import Dữ Liệu
                     </a>
                     <ul class="dropdown-menu dropdown-menu-dark">
                         <li>
-                            <a class="dropdown-item <?= $baseName === 'index' ? 'active' : '' ?>" href="index.php">
+                            <a class="dropdown-item <?= $baseName === 'import' ? 'active' : '' ?>" href="import.php">
                                 <i class="fas fa-file-csv me-2"></i>Order Detail
                             </a>
                         </li>

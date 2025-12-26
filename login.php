@@ -1,13 +1,17 @@
 <?php
 session_start();
 
+// Enable error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 // Nếu đã đăng nhập, chuyển về dashboard
 if (isset($_SESSION['user_id'])) {
     header('Location: dashboard.php');
     exit;
 }
 
-require_once 'models/UserModel.php';
+require_once __DIR__ . '/models/UserModel.php';
 
 $error = '';
 $success = '';
@@ -16,28 +20,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
     $password = $_POST['password'] ?? '';
     
+    echo "<!-- DEBUG: Login attempt for username: " . htmlspecialchars($username) . " -->";
+    
     if (empty($username) || empty($password)) {
         $error = 'Vui lòng nhập đầy đủ thông tin';
     } else {
-        $userModel = new UserModel();
-        $user = $userModel->authenticate($username, $password);
-        
-        if ($user) {
-            // Lưu thông tin vào session
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['username'] = $user['username'];
-            $_SESSION['full_name'] = $user['full_name'];
-            $_SESSION['user_role'] = $user['role'];
-            $_SESSION['last_activity'] = time();
+        try {
+            $userModel = new UserModel();
+            $user = $userModel->authenticate($username, $password);
             
-            // Redirect về trang được yêu cầu hoặc dashboard
-            $redirect = $_SESSION['redirect_after_login'] ?? 'dashboard.php';
-            unset($_SESSION['redirect_after_login']);
-            
-            header('Location: ' . $redirect);
-            exit;
-        } else {
-            $error = 'Tên đăng nhập hoặc mật khẩu không đúng';
+            if ($user) {
+                // Lưu thông tin vào session
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['username'] = $user['username'];
+                $_SESSION['full_name'] = $user['full_name'];
+                $_SESSION['user_role'] = $user['role'];
+                $_SESSION['last_activity'] = time();
+                
+                // Debug
+                echo "<!-- DEBUG: Login successful! User ID: " . $user['id'] . " -->";
+                
+                // Redirect về trang được yêu cầu hoặc dashboard
+                $redirect = $_SESSION['redirect_after_login'] ?? 'dashboard.php';
+                unset($_SESSION['redirect_after_login']);
+                
+                header('Location: ' . $redirect);
+                exit;
+            } else {
+                $error = 'Tên đăng nhập hoặc mật khẩu không đúng';
+                echo "<!-- DEBUG: Authentication failed -->";
+            }
+        } catch (Exception $e) {
+            $error = 'Lỗi hệ thống: ' . $e->getMessage();
+            echo "<!-- DEBUG ERROR: " . $e->getMessage() . " -->";
         }
     }
 }
@@ -278,7 +293,7 @@ if (isset($_SESSION['success'])) {
             <form method="POST" action="">
                 <div class="form-floating">
                     <input type="text" class="form-control" id="username" name="username" 
-                           placeholder="Tên đăng nhập" required autofocus>
+                           placeholder="Tên đăng nhập" required autofocus value="admin">
                     <label for="username">
                         <i class="fas fa-user me-2"></i>Tên đăng nhập
                     </label>
@@ -286,16 +301,9 @@ if (isset($_SESSION['success'])) {
                 
                 <div class="form-floating">
                     <input type="password" class="form-control" id="password" name="password" 
-                           placeholder="Mật khẩu" required>
+                           placeholder="Mật khẩu" required value="admin123">
                     <label for="password">
                         <i class="fas fa-lock me-2"></i>Mật khẩu
-                    </label>
-                </div>
-                
-                <div class="form-check mb-3">
-                    <input class="form-check-input" type="checkbox" id="remember" name="remember">
-                    <label class="form-check-label" for="remember">
-                        Ghi nhớ đăng nhập
                     </label>
                 </div>
                 
@@ -313,18 +321,13 @@ if (isset($_SESSION['success'])) {
                     </div>
                     <code>admin123</code>
                 </div>
-                <div class="demo-account">
-                    <div>
-                        <strong>User:</strong> user1
-                    </div>
-                    <code>admin123</code>
-                </div>
-                <div class="demo-account">
-                    <div>
-                        <strong>Viewer:</strong> viewer1
-                    </div>
-                    <code>admin123</code>
-                </div>
+            </div>
+            
+            <!-- Debug Info -->
+            <div class="mt-3">
+                <small class="text-muted">
+                    Nếu không đăng nhập được, vui lòng chạy file <code>create_admin.php</code> để tạo tài khoản admin.
+                </small>
             </div>
         </div>
     </div>

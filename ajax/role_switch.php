@@ -1,14 +1,15 @@
 <?php
 /**
  * ============================================
- * ROLE SWITCH AJAX HANDLER
+ * ROLE SWITCH AJAX HANDLER - FIXED
  * ============================================
  */
 
 session_start();
 header('Content-Type: application/json');
 
-require_once __DIR__ . '/../middleware/AuthMiddleware.php';
+// FIX: Đường dẫn tương đối đúng
+require_once '../middleware/AuthMiddleware.php';
 
 // Require admin
 try {
