@@ -1,6 +1,6 @@
 <?php
 /**
- * ✅ MODEL TỐI ƯU V2 - KPI Nhân Viên với Logic Ngưỡng N + REDIS CACHE
+ * ✅ MODEL TỐI ƯU V3 - Query đơn giản hơn, tránh MySQL timeout
  */
 
 require_once 'config/database.php';
@@ -11,17 +11,20 @@ class NhanVienKPIModel {
     
     private const REDIS_HOST = '127.0.0.1';
     private const REDIS_PORT = 6379;
-    private const REDIS_TTL = 3600; // 1 giờ
+    private const REDIS_TTL = 3600;
 
     public function __construct() {
         $database = new Database();
         $this->conn = $database->getConnection();
+        
+        // Tăng timeout cho MySQL
+        $this->conn->setAttribute(PDO::ATTR_TIMEOUT, 300);
+        $this->conn->exec("SET SESSION wait_timeout=300");
+        $this->conn->exec("SET SESSION interactive_timeout=300");
+        
         $this->connectRedis();
     }
     
-    /**
-     * ✅ KẾT NỐI REDIS
-     */
     private function connectRedis() {
         try {
             $this->redis = new Redis();
@@ -34,177 +37,229 @@ class NhanVienKPIModel {
     }
 
     /**
-     * ✅ LẤY TẤT CẢ NHÂN VIÊN KÈM KPI - WITH REDIS CACHE
+     * ✅ LẤY NHÂN VIÊN - QUERY ĐƠN GIẢN HƠN
      */
     public function getAllEmployeesWithKPI($tu_ngay, $den_ngay, $product_filter = '', $threshold_n = 5) {
-    // 1️⃣ Tạo cache key
-    $cacheKey = $this->generateCacheKey($tu_ngay, $den_ngay, $product_filter, $threshold_n);
-    
-    // 2️⃣ Thử lấy từ Redis
-    if ($this->redis) {
-        try {
-            $cached = $this->redis->get($cacheKey);
-            if ($cached) {
-                return json_decode($cached, true);
+        $cacheKey = $this->generateCacheKey($tu_ngay, $den_ngay, $product_filter, $threshold_n);
+        
+        // Thử Redis
+        if ($this->redis) {
+            try {
+                $cached = $this->redis->get($cacheKey);
+                if ($cached) {
+                    return json_decode($cached, true);
+                }
+            } catch (Exception $e) {
+                error_log("Redis get error: " . $e->getMessage());
             }
-        } catch (Exception $e) {
-            error_log("Redis get error: " . $e->getMessage());
         }
-    }
-    
-    // 3️⃣ Thử lấy từ Database
-    $dbResults = $this->getFromSummaryTable($cacheKey);
-    if (!empty($dbResults)) {
-        $this->populateRedisFromDB($cacheKey, $dbResults);
-        return $dbResults;
-    }
-    
-    // 4️⃣ Query từ database chính (logic gốc - giữ nguyên từ line 65-180)
-    $sql = "SELECT 
-                o.DSRCode,
-                o.DSRTypeProvince,
-                -- ... (giữ nguyên query gốc)
-            ";
-    
-    $params = [$tu_ngay, $den_ngay];
-    if (!empty($product_filter)) {
-        $params[] = $product_filter . '%';
-    }
-    $params[] = $tu_ngay;
-    $params[] = $den_ngay;
-    if (!empty($product_filter)) {
-        $params[] = $product_filter . '%';
-    }
-    
-    $stmt = $this->conn->prepare($sql);
-    $stmt->execute($params);
-    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // Parse daily data và tính toán (giữ nguyên logic gốc từ line 120-180)
-    foreach ($results as &$row) {
-        $row['daily_orders'] = !empty($row['daily_orders_str']) 
-            ? array_map('intval', explode(',', $row['daily_orders_str'])) 
-            : [];
-        $row['daily_amounts'] = !empty($row['daily_amounts_str']) 
-            ? array_map('floatval', explode(',', $row['daily_amounts_str'])) 
-            : [];
-        $row['daily_customers'] = !empty($row['daily_customers_str']) 
-            ? array_map('intval', explode(',', $row['daily_customers_str'])) 
-            : [];
-        $row['daily_dates'] = !empty($row['daily_dates_str']) 
-            ? explode(',', $row['daily_dates_str']) 
-            : [];
         
-        $row['avg_daily_orders'] = $row['working_days'] > 0 
-            ? round($row['total_orders'] / $row['working_days'], 2) 
-            : 0;
-        $row['avg_daily_amount'] = $row['working_days'] > 0 
-            ? round($row['total_amount'] / $row['working_days'], 0) 
-            : 0;
-        $row['avg_daily_customers'] = $row['working_days'] > 0 
-            ? round($row['total_customers'] / $row['working_days'], 2) 
-            : 0;
+        // Thử Database cache
+        $dbResults = $this->getFromSummaryTable($cacheKey);
+        if (!empty($dbResults)) {
+            $this->populateRedisFromDB($cacheKey, $dbResults);
+            return $dbResults;
+        }
         
-        $row['risk_analysis'] = $this->analyzeRiskByThreshold($row['daily_customers'], $threshold_n, $row['daily_dates']);
-        $row['risk_score'] = $row['risk_analysis']['risk_score'];
-        $row['risk_level'] = $row['risk_analysis']['risk_level'];
-        $row['violation_days'] = $row['risk_analysis']['violation_days'];
-        $row['violation_count'] = $row['risk_analysis']['violation_count'];
-        $row['ten_nv'] = !empty($row['TenNVBH']) ? $row['TenNVBH'] : 'NV_' . $row['DSRCode'];
+        // ✅ QUERY ĐƠN GIẢN - Lấy danh sách nhân viên trước
+        $sql1 = "SELECT DISTINCT 
+                    o.DSRCode,
+                    o.DSRTypeProvince,
+                    MAX(nv.TenNVBH) as TenNVBH,
+                    MAX(nv.MaGSBH) as MaGSBH
+                FROM orderdetail o
+                LEFT JOIN dskh nv ON o.DSRCode = nv.MaNVBH
+                WHERE o.DSRCode IS NOT NULL 
+                AND o.DSRCode != ''
+                AND DATE(o.OrderDate) >= ?
+                AND DATE(o.OrderDate) <= ?
+                " . (!empty($product_filter) ? "AND o.ProductCode LIKE ?" : "") . "
+                GROUP BY o.DSRCode, o.DSRTypeProvince";
         
-        unset($row['daily_orders_str'], $row['daily_amounts_str'], $row['daily_customers_str'], $row['daily_dates_str']);
+        $params1 = [$tu_ngay, $den_ngay];
+        if (!empty($product_filter)) {
+            $params1[] = $product_filter . '%';
+        }
+        
+        $stmt1 = $this->conn->prepare($sql1);
+        $stmt1->execute($params1);
+        $employees = $stmt1->fetchAll(PDO::FETCH_ASSOC);
+        
+        if (empty($employees)) {
+            return [];
+        }
+        
+        // ✅ Lấy thống kê cho từng nhân viên (loop đơn giản)
+        $results = [];
+        
+        foreach ($employees as $emp) {
+            $dsrCode = $emp['DSRCode'];
+            
+            // Query đơn giản cho mỗi nhân viên
+            $sql2 = "SELECT 
+                        DATE(OrderDate) as order_date,
+                        COUNT(DISTINCT OrderNumber) as daily_orders,
+                        COUNT(DISTINCT CustCode) as daily_customers,
+                        SUM(TotalNetAmount) as daily_amount
+                    FROM orderdetail
+                    WHERE DSRCode = ?
+                    AND DATE(OrderDate) >= ?
+                    AND DATE(OrderDate) <= ?
+                    " . (!empty($product_filter) ? "AND ProductCode LIKE ?" : "") . "
+                    GROUP BY DATE(OrderDate)
+                    ORDER BY order_date";
+            
+            $params2 = [$dsrCode, $tu_ngay, $den_ngay];
+            if (!empty($product_filter)) {
+                $params2[] = $product_filter . '%';
+            }
+            
+            $stmt2 = $this->conn->prepare($sql2);
+            $stmt2->execute($params2);
+            $dailyData = $stmt2->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Tính toán
+            $daily_dates = [];
+            $daily_orders = [];
+            $daily_customers = [];
+            $daily_amounts = [];
+            $total_orders = 0;
+            $total_customers = 0;
+            $total_amount = 0;
+            $max_customers = 0;
+            
+            foreach ($dailyData as $day) {
+                $daily_dates[] = $day['order_date'];
+                $daily_orders[] = intval($day['daily_orders']);
+                $daily_customers[] = intval($day['daily_customers']);
+                $daily_amounts[] = floatval($day['daily_amount']);
+                
+                $total_orders += intval($day['daily_orders']);
+                $total_customers += intval($day['daily_customers']);
+                $total_amount += floatval($day['daily_amount']);
+                $max_customers = max($max_customers, intval($day['daily_customers']));
+            }
+            
+            $working_days = count($dailyData);
+            
+            $row = [
+                'DSRCode' => $emp['DSRCode'],
+                'DSRTypeProvince' => $emp['DSRTypeProvince'],
+                'TenNVBH' => $emp['TenNVBH'],
+                'MaGSBH' => $emp['MaGSBH'],
+                'total_orders' => $total_orders,
+                'total_customers' => $total_customers,
+                'total_amount' => $total_amount,
+                'working_days' => $working_days,
+                'max_day_customers' => $max_customers,
+                'max_day_orders' => max($daily_orders ?: [0]),
+                'max_day_amount' => max($daily_amounts ?: [0]),
+                'daily_dates' => $daily_dates,
+                'daily_orders' => $daily_orders,
+                'daily_customers' => $daily_customers,
+                'daily_amounts' => $daily_amounts,
+                'avg_daily_orders' => $working_days > 0 ? round($total_orders / $working_days, 2) : 0,
+                'avg_daily_amount' => $working_days > 0 ? round($total_amount / $working_days, 0) : 0,
+                'avg_daily_customers' => $working_days > 0 ? round($total_customers / $working_days, 2) : 0,
+            ];
+            
+            // Phân tích risk
+            $row['risk_analysis'] = $this->analyzeRiskByThreshold($daily_customers, $threshold_n, $daily_dates);
+            $row['risk_score'] = $row['risk_analysis']['risk_score'];
+            $row['risk_level'] = $row['risk_analysis']['risk_level'];
+            $row['violation_days'] = $row['risk_analysis']['violation_days'];
+            $row['violation_count'] = $row['risk_analysis']['violation_count'];
+            $row['ten_nv'] = !empty($row['TenNVBH']) ? $row['TenNVBH'] : 'NV_' . $row['DSRCode'];
+            
+            $results[] = $row;
+        }
+        
+        // Lưu cache
+        if (!empty($results)) {
+            $this->saveKPICache($cacheKey, $results, $tu_ngay, $den_ngay, $product_filter, $threshold_n);
+        }
+        
+        return $results;
     }
-    
-    // 5️⃣ Lưu vào cache
-    if (!empty($results)) {
-        $this->saveKPICache($cacheKey, $results, $tu_ngay, $den_ngay, $product_filter, $threshold_n);
-    }
-    
-    return $results;
-}
 
     private function getFromSummaryTable($cacheKey) {
-    try {
-        $sql = "SELECT data FROM summary_nhanvien_kpi_cache 
-                WHERE cache_key = ? LIMIT 1";
-        
-        $stmt = $this->conn->prepare($sql);
-        $stmt->execute([$cacheKey]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if ($row && !empty($row['data'])) {
-            return json_decode($row['data'], true);
+        try {
+            $sql = "SELECT data FROM summary_nhanvien_kpi_cache 
+                    WHERE cache_key = ? LIMIT 1";
+            
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute([$cacheKey]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($row && !empty($row['data'])) {
+                return json_decode($row['data'], true);
+            }
+        } catch (Exception $e) {
+            error_log("KPI database backup fetch error: " . $e->getMessage());
         }
-    } catch (Exception $e) {
-        error_log("KPI database backup fetch error: " . $e->getMessage());
+        
+        return null;
     }
-    
-    return null;
-}
 
     private function saveKPICache($cacheKey, $data, $tu_ngay, $den_ngay, $product_filter, $threshold_n) {
-    try {
-        // Lưu Redis
-        if ($this->redis) {
+        try {
+            if ($this->redis) {
+                $this->redis->setex(
+                    $cacheKey, 
+                    self::REDIS_TTL, 
+                    json_encode($data, JSON_UNESCAPED_UNICODE)
+                );
+            }
+            
+            $criticalCount = 0;
+            $warningCount = 0;
+            foreach ($data as $item) {
+                if ($item['risk_level'] === 'critical') $criticalCount++;
+                elseif ($item['risk_level'] === 'warning') $warningCount++;
+            }
+            
+            $sql = "INSERT INTO summary_nhanvien_kpi_cache 
+                    (cache_key, tu_ngay, den_ngay, product_filter, threshold_n, data, employee_count, critical_count, warning_count)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE 
+                    data = VALUES(data),
+                    employee_count = VALUES(employee_count),
+                    critical_count = VALUES(critical_count),
+                    warning_count = VALUES(warning_count),
+                    calculated_at = CURRENT_TIMESTAMP";
+            
+            $stmt = $this->conn->prepare($sql);
+            $stmt->execute([
+                $cacheKey,
+                $tu_ngay,
+                $den_ngay,
+                $product_filter ?: null,
+                $threshold_n,
+                json_encode($data, JSON_UNESCAPED_UNICODE),
+                count($data),
+                $criticalCount,
+                $warningCount
+            ]);
+            
+        } catch (Exception $e) {
+            error_log("Save KPI cache error: " . $e->getMessage());
+        }
+    }
+
+    private function populateRedisFromDB($cacheKey, $data) {
+        if (!$this->redis) return;
+        
+        try {
             $this->redis->setex(
                 $cacheKey, 
                 self::REDIS_TTL, 
                 json_encode($data, JSON_UNESCAPED_UNICODE)
             );
+        } catch (Exception $e) {
+            error_log("KPI Redis populate error: " . $e->getMessage());
         }
-        
-        // Đếm critical và warning
-        $criticalCount = 0;
-        $warningCount = 0;
-        foreach ($data as $item) {
-            if ($item['risk_level'] === 'critical') $criticalCount++;
-            elseif ($item['risk_level'] === 'warning') $warningCount++;
-        }
-        
-        // Lưu Database
-        $sql = "INSERT INTO summary_nhanvien_kpi_cache 
-                (cache_key, tu_ngay, den_ngay, product_filter, threshold_n, data, employee_count, critical_count, warning_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE 
-                data = VALUES(data),
-                employee_count = VALUES(employee_count),
-                critical_count = VALUES(critical_count),
-                warning_count = VALUES(warning_count),
-                calculated_at = CURRENT_TIMESTAMP";
-        
-        $stmt = $this->conn->prepare($sql);
-        $stmt->execute([
-            $cacheKey,
-            $tu_ngay,
-            $den_ngay,
-            $product_filter ?: null,
-            $threshold_n,
-            json_encode($data, JSON_UNESCAPED_UNICODE),
-            count($data),
-            $criticalCount,
-            $warningCount
-        ]);
-        
-    } catch (Exception $e) {
-        error_log("Save KPI cache error: " . $e->getMessage());
     }
-}
-    private function populateRedisFromDB($cacheKey, $data) {
-    if (!$this->redis) return;
-    
-    try {
-        $this->redis->setex(
-            $cacheKey, 
-            self::REDIS_TTL, 
-            json_encode($data, JSON_UNESCAPED_UNICODE)
-        );
-    } catch (Exception $e) {
-        error_log("KPI Redis populate error: " . $e->getMessage());
-    }
-}
-    /**
-     * ✅ PHÂN TÍCH RISK DỰA TRÊN NGƯỠNG N
-     */
+
     private function analyzeRiskByThreshold($daily_customers, $threshold_n, $daily_dates = []) {
         $violation_days = [];
         $violation_count = 0;
@@ -231,7 +286,6 @@ class NhanVienKPIModel {
         
         $risk_score = 0;
         
-        // Dựa trên tỷ lệ ngày vi phạm
         if ($violation_rate >= 80) {
             $risk_score += 40;
         } elseif ($violation_rate >= 60) {
@@ -242,7 +296,6 @@ class NhanVienKPIModel {
             $risk_score += 10;
         }
         
-        // Dựa trên mức độ vi phạm cao nhất
         if ($max_violation >= $threshold_n * 3) {
             $risk_score += 40;
         } elseif ($max_violation >= $threshold_n * 2) {
@@ -253,7 +306,6 @@ class NhanVienKPIModel {
             $risk_score += 10;
         }
         
-        // Dựa trên số ngày vi phạm liên tiếp
         $consecutive = $this->countConsecutiveViolations($daily_customers, $threshold_n);
         if ($consecutive >= 3) {
             $risk_score += 20;
@@ -261,7 +313,6 @@ class NhanVienKPIModel {
             $risk_score += 10;
         }
         
-        // Xác định risk level
         if ($risk_score >= 75) {
             $risk_level = 'critical';
         } elseif ($risk_score >= 50) {
@@ -282,9 +333,6 @@ class NhanVienKPIModel {
         ];
     }
 
-    /**
-     * Đếm số ngày vi phạm liên tiếp
-     */
     private function countConsecutiveViolations($daily_customers, $threshold_n) {
         $max_consecutive = 0;
         $current_consecutive = 0;
@@ -301,9 +349,6 @@ class NhanVienKPIModel {
         return $max_consecutive;
     }
 
-    /**
-     * ✅ LẤY CHI TIẾT KHÁCH HÀNG - KHÔNG CACHE (dynamic)
-     */
     public function getEmployeeCustomerDetails($dsr_code, $tu_ngay, $den_ngay, $product_filter = '') {
         $sql = "SELECT 
                     o.CustCode,
@@ -334,7 +379,6 @@ class NhanVienKPIModel {
         
         $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Parse order details
         foreach ($results as &$row) {
             $dates = explode(',', $row['order_dates']);
             $numbers = explode(',', $row['order_numbers']);
@@ -349,17 +393,12 @@ class NhanVienKPIModel {
                 ];
             }
             
-            unset($row['order_dates']);
-            unset($row['order_numbers']);
-            unset($row['order_amounts']);
+            unset($row['order_dates'], $row['order_numbers'], $row['order_amounts']);
         }
         
         return $results;
     }
 
-    /**
-     * ✅ LẤY THỐNG KÊ HỆ THỐNG - WITH REDIS CACHE
-     */
     public function getSystemMetrics($tu_ngay, $den_ngay, $product_filter = '') {
         $cacheKey = "nhanvien:kpi:metrics:{$tu_ngay}:{$den_ngay}:" . md5($product_filter);
         
@@ -378,37 +417,15 @@ class NhanVienKPIModel {
                     COUNT(DISTINCT o.DSRCode) as emp_count,
                     COUNT(DISTINCT o.OrderNumber) as total_orders,
                     COUNT(DISTINCT o.CustCode) as total_customers,
-                    COALESCE(SUM(o.TotalNetAmount), 0) as total_amount,
-                    COUNT(DISTINCT DATE(o.OrderDate)) as total_working_days,
-                    MAX(daily_stats.max_orders) as max_daily_orders,
-                    MAX(daily_stats.max_amount) as max_daily_amount
+                    COALESCE(SUM(o.TotalNetAmount), 0) as total_amount
                 FROM orderdetail o
-                LEFT JOIN (
-                    SELECT 
-                        DSRCode,
-                        DATE(OrderDate) as order_date,
-                        COUNT(DISTINCT OrderNumber) as max_orders,
-                        SUM(TotalNetAmount) as max_amount
-                    FROM orderdetail
-                    WHERE DSRCode IS NOT NULL 
-                    AND DSRCode != ''
-                    AND DATE(OrderDate) >= ?
-                    AND DATE(OrderDate) <= ?
-                    " . (!empty($product_filter) ? "AND ProductCode LIKE ?" : "") . "
-                    GROUP BY DSRCode, DATE(OrderDate)
-                ) daily_stats ON o.DSRCode = daily_stats.DSRCode
                 WHERE o.DSRCode IS NOT NULL 
                 AND o.DSRCode != ''
                 AND DATE(o.OrderDate) >= ?
                 AND DATE(o.OrderDate) <= ?
-                " . (!empty($product_filter) ? "AND o.ProductCode LIKE ?" : "") . "";
+                " . (!empty($product_filter) ? "AND o.ProductCode LIKE ?" : "");
         
         $params = [$tu_ngay, $den_ngay];
-        if (!empty($product_filter)) {
-            $params[] = $product_filter . '%';
-        }
-        $params[] = $tu_ngay;
-        $params[] = $den_ngay;
         if (!empty($product_filter)) {
             $params[] = $product_filter . '%';
         }
@@ -433,17 +450,11 @@ class NhanVienKPIModel {
         return $result;
     }
 
-    /**
-     * ✅ GENERATE CACHE KEY
-     */
     private function generateCacheKey($tu_ngay, $den_ngay, $product_filter, $threshold_n) {
         $productHash = !empty($product_filter) ? md5($product_filter) : 'all';
         return "nhanvien:kpi:N{$threshold_n}:{$tu_ngay}:{$den_ngay}:{$productHash}";
     }
 
-    /**
-     * ✅ XÓA CACHE
-     */
     public function clearCache($pattern = 'nhanvien:kpi:*') {
         if (!$this->redis) return false;
         
@@ -459,10 +470,6 @@ class NhanVienKPIModel {
             return false;
         }
     }
-
-    // ============================================
-    // CÁC HÀM CŨ GIỮ NGUYÊN
-    // ============================================
 
     public function getAvailableMonths() {
         $sql = "SELECT DISTINCT CONCAT(RptYear, '-', LPAD(RptMonth, 2, '0')) as thang

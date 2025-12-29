@@ -1,7 +1,7 @@
 <?php
 /**
  * ============================================
- * ANOMALY CONTROLLER - SHOW BY RISK LEVEL
+ * ANOMALY CONTROLLER - WITH AUTHENTICATION
  * ============================================
  */
 
@@ -9,18 +9,23 @@ require_once 'models/OrderDetailModel.php';
 require_once 'models/AnomalyDetectionModel.php';
 require_once 'models/DynamicCacheKeyGenerator.php';
 require_once 'services/AnomalyCalculationService.php';
+require_once 'middleware/AuthMiddleware.php';
 
 class AnomalyController {
     private $orderModel;
     private $anomalyModel;
     private $redis;
     private $conn;
+    private $currentUser;
     
     private const REDIS_HOST = '127.0.0.1';
     private const REDIS_PORT = 6379;
     private const REDIS_TTL = 86400;
     
     public function __construct() {
+        // ✅ Get current user info
+        $this->currentUser = AuthMiddleware::getCurrentUser();
+        
         $this->orderModel = new OrderDetailModel();
         $this->anomalyModel = new AnomalyDetectionModel();
         $this->connectRedis();
@@ -36,7 +41,27 @@ class AnomalyController {
             $this->redis->ping();
         } catch (Exception $e) {
             $this->redis = null;
+            $this->logActivity('redis_connection_failed', [
+                'error' => $e->getMessage()
+            ]);
         }
+    }
+    
+    /**
+     * ✅ Log user activity
+     */
+    private function logActivity($action, $details = []) {
+        $logData = [
+            'timestamp' => date('Y-m-d H:i:s'),
+            'user_id' => $this->currentUser['id'],
+            'username' => $this->currentUser['username'],
+            'role' => $this->currentUser['role'],
+            'action' => $action,
+            'details' => $details,
+            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
+        ];
+        
+        error_log("Anomaly Activity: " . json_encode($logData));
     }
     
     /**
@@ -54,12 +79,17 @@ class AnomalyController {
             'gkhl_status' => $_GET['gkhl_status'] ?? ''
         ];
         
+        // ✅ Log filter request
+        $this->logActivity('view_anomaly_report', [
+            'filters' => $filters
+        ]);
+        
         $availableYears = $this->orderModel->getAvailableYears();
         $availableMonths = $this->orderModel->getAvailableMonths();
         $provinces = $this->orderModel->getProvinces();
         
-        $allData = []; // ✅ Lưu toàn bộ data để tính summary
-        $displayData = []; // ✅ Data để hiển thị (có giới hạn)
+        $allData = [];
+        $displayData = [];
         $summary = [
             'total_customers' => 0,
             'critical_count' => 0,
@@ -88,6 +118,12 @@ class AnomalyController {
                         
                         $duration = round((microtime(true) - $startTime) * 1000, 2);
                         $_SESSION['info'] = "✅ Dữ liệu từ Cache ({$duration}ms) - " . count($allData) . " bản ghi";
+                        
+                        $this->logActivity('data_from_cache', [
+                            'source' => 'redis',
+                            'count' => count($allData),
+                            'duration_ms' => $duration
+                        ]);
                     }
                 }
             }
@@ -105,6 +141,12 @@ class AnomalyController {
                     
                     $duration = round((microtime(true) - $startTime) * 1000, 2);
                     $_SESSION['info'] = "✅ Dữ liệu từ Database ({$duration}ms) - " . count($allData) . " bản ghi";
+                    
+                    $this->logActivity('data_from_database', [
+                        'source' => 'summary_table',
+                        'count' => count($allData),
+                        'duration_ms' => $duration
+                    ]);
                 }
             }
             
@@ -116,6 +158,10 @@ class AnomalyController {
                     
                     $_SESSION['warning'] = "⏳ Đang tính toán dữ liệu lần đầu tiên... Vui lòng chờ trong giây lát.";
                     
+                    $this->logActivity('calculation_started', [
+                        'filters' => $filters
+                    ]);
+                    
                     $calculationService = new AnomalyCalculationService($this->conn, $this->redis);
                     $allData = $calculationService->calculateAndCache($filters, $cacheKey);
                     $allData = $this->normalizeDataStructure($allData);
@@ -125,17 +171,26 @@ class AnomalyController {
                     $duration = round((microtime(true) - $startTime) * 1000, 2);
                     $_SESSION['success'] = "✅ Tính toán hoàn tất ({$duration}ms) - " . count($allData) . " bản ghi. Các lần truy cập tiếp theo sẽ rất nhanh!";
                     
+                    $this->logActivity('calculation_completed', [
+                        'count' => count($allData),
+                        'duration_ms' => $duration
+                    ]);
+                    
                 } catch (Exception $e) {
                     $_SESSION['error'] = "❌ Lỗi tính toán: " . $e->getMessage();
                     $allData = [];
+                    
+                    $this->logActivity('calculation_failed', [
+                        'error' => $e->getMessage()
+                    ]);
                 }
             }
             
-            // ✅ Tính summary từ TOÀN BỘ data
+            // Calculate summary from ALL data
             if (!empty($allData)) {
                 $summary = $this->calculateSummary($allData);
                 
-                // ✅ Tạo displayData: Ưu tiên critical và high trước
+                // Prepare display data: prioritize critical and high first
                 $displayData = $this->prepareDisplayData($allData);
             }
         }
@@ -146,17 +201,25 @@ class AnomalyController {
         $selectedYears = $filters['years'];
         $selectedMonths = $filters['months'];
         
-        // ✅ Pass displayData thay vì allData
+        // Pass displayData instead of allData
         $data = $displayData;
+        
+        // ✅ Log final stats
+        $this->logActivity('report_generated', [
+            'data_source' => $dataSource,
+            'total_found' => $summary['total_customers'],
+            'displayed' => count($displayData),
+            'duration_ms' => $loadTime
+        ]);
         
         require_once 'views/anomaly/report.php';
     }
     
     /**
-     * ✅ NEW: Prepare display data with priority - BALANCED VERSION
+     * ✅ Prepare display data with priority - BALANCED VERSION
      */
     private function prepareDisplayData($allData) {
-        // Phân loại theo risk level
+        // Categorize by risk level
         $critical = [];
         $high = [];
         $medium = [];
@@ -179,7 +242,7 @@ class AnomalyController {
             }
         }
         
-        // Sắp xếp từng nhóm theo điểm
+        // Sort each group by score
         usort($critical, function($a, $b) {
             return $b['total_score'] <=> $a['total_score'];
         });
@@ -193,41 +256,41 @@ class AnomalyController {
             return $b['total_score'] <=> $a['total_score'];
         });
         
-        // ✅ Logic phân bổ thông minh cho top 500:
-        // 1. TẤT CẢ critical (ưu tiên tuyệt đối)
-        // 2. TẤT CẢ high (ưu tiên cao)
-        // 3. Nếu còn chỗ: phân bổ 70% medium + 30% low
+        // Smart allocation logic for top 500:
+        // 1. ALL critical (absolute priority)
+        // 2. ALL high (high priority)
+        // 3. If remaining: 70% medium + 30% low
         
         $result = [];
-        $limit = 500; // ✅ Tăng từ 100 lên 500 để hiển thị đủ critical + high
+        $limit = 500;
         
-        // Bước 1: Thêm tất cả critical
+        // Step 1: Add all critical
         $result = array_merge($result, $critical);
         $remaining = $limit - count($result);
         
-        // Bước 2: Thêm tất cả high (hoặc đủ chỗ còn lại)
+        // Step 2: Add all high (or fill remaining slots)
         if ($remaining > 0) {
             if (count($high) <= $remaining) {
-                // Đủ chỗ cho tất cả high
+                // Enough space for all high
                 $result = array_merge($result, $high);
                 $remaining = $limit - count($result);
                 
-                // Bước 3: Phân bổ medium và low
+                // Step 3: Distribute medium and low
                 if ($remaining > 0) {
-                    // Tính toán phân bổ: 70% medium, 30% low
+                    // Calculate distribution: 70% medium, 30% low
                     $mediumSlots = (int)ceil($remaining * 0.7);
                     $lowSlots = $remaining - $mediumSlots;
                     
-                    // Lấy medium
+                    // Get medium
                     $mediumToAdd = array_slice($medium, 0, $mediumSlots);
                     $result = array_merge($result, $mediumToAdd);
                     
-                    // Lấy low
+                    // Get low
                     $lowToAdd = array_slice($low, 0, $lowSlots);
                     $result = array_merge($result, $lowToAdd);
                 }
             } else {
-                // Không đủ chỗ cho tất cả high, chỉ lấy top high
+                // Not enough space for all high, only take top high
                 $result = array_merge($result, array_slice($high, 0, $remaining));
             }
         }
@@ -354,6 +417,11 @@ class AnomalyController {
             'gkhl_status' => $_GET['gkhl_status'] ?? ''
         ];
         
+        // ✅ Log export attempt
+        $this->logActivity('export_started', [
+            'filters' => $filters
+        ]);
+        
         if (empty($filters['years']) || empty($filters['months'])) {
             $_SESSION['error'] = 'Vui lòng chọn năm và tháng để export';
             header('Location: anomaly.php');
@@ -379,11 +447,18 @@ class AnomalyController {
         
         if (empty($data)) {
             $_SESSION['error'] = 'Không có dữ liệu để export';
+            $this->logActivity('export_failed', ['reason' => 'no_data']);
             header('Location: anomaly.php');
             exit;
         }
         
         $fileName = $this->generateFileName($filters);
+        
+        // ✅ Log successful export
+        $this->logActivity('export_completed', [
+            'filename' => $fileName,
+            'row_count' => count($data)
+        ]);
         
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="' . $fileName . '"');
@@ -395,10 +470,13 @@ class AnomalyController {
         
         $headers = [
             'STT', 'Mã KH', 'Tên KH', 'Tỉnh', 'Điểm BT', 'Mức độ', 'Số dấu hiệu',
-            'Tổng DS', 'Tổng đơn', 'Chi tiết'
+            'Tổng DS', 'Tổng đơn', 'Chi tiết', 'Người export', 'Thời gian export'
         ];
         
         fputcsv($output, $headers);
+        
+        $exportTime = date('d/m/Y H:i:s');
+        $exportUser = $this->currentUser['full_name'] . ' (' . $this->currentUser['username'] . ')';
         
         foreach ($data as $index => $row) {
             $details = [];
@@ -418,7 +496,9 @@ class AnomalyController {
                 $row['anomaly_count'],
                 $row['total_sales'],
                 $row['total_orders'],
-                implode(' | ', $details)
+                implode(' | ', $details),
+                $exportUser,
+                $exportTime
             ];
             
             fputcsv($output, $csvRow);
@@ -493,6 +573,8 @@ class AnomalyController {
             $fileName .= "_" . $this->slugify($filters['ma_tinh_tp']);
         }
         
+        // ✅ Add user info to filename
+        $fileName .= "_" . $this->slugify($this->currentUser['username']);
         $fileName .= "_" . date('YmdHis') . ".csv";
         
         return $fileName;
@@ -500,9 +582,24 @@ class AnomalyController {
     
     private function slugify($text) {
         $text = mb_strtolower($text, 'UTF-8');
-        $text = preg_replace('/[àáảãạăằắẳẵặâầấẩẫậ]/u', 'a', $text);
-        $text = preg_replace('/[èéẻẽẹêềếểễệ]/u', 'e', $text);
-        $text = preg_replace('/[đ]/u', 'd', $text);
+        
+        $vietnamese = [
+            'à'=>'a','á'=>'a','ả'=>'a','ã'=>'a','ạ'=>'a',
+            'ă'=>'a','ằ'=>'a','ắ'=>'a','ẳ'=>'a','ẵ'=>'a','ặ'=>'a',
+            'â'=>'a','ầ'=>'a','ấ'=>'a','ẩ'=>'a','ẫ'=>'a','ậ'=>'a',
+            'đ'=>'d',
+            'è'=>'e','é'=>'e','ẻ'=>'e','ẽ'=>'e','ẹ'=>'e',
+            'ê'=>'e','ề'=>'e','ế'=>'e','ể'=>'e','ễ'=>'e','ệ'=>'e',
+            'ì'=>'i','í'=>'i','ỉ'=>'i','ĩ'=>'i','ị'=>'i',
+            'ò'=>'o','ó'=>'o','ỏ'=>'o','õ'=>'o','ọ'=>'o',
+            'ô'=>'o','ồ'=>'o','ố'=>'o','ổ'=>'o','ỗ'=>'o','ộ'=>'o',
+            'ơ'=>'o','ờ'=>'o','ớ'=>'o','ở'=>'o','ỡ'=>'o','ợ'=>'o',
+            'ù'=>'u','ú'=>'u','ủ'=>'u','ũ'=>'u','ụ'=>'u',
+            'ư'=>'u','ừ'=>'u','ứ'=>'u','ử'=>'u','ữ'=>'u','ự'=>'u',
+            'ỳ'=>'y','ý'=>'y','ỷ'=>'y','ỹ'=>'y','ỵ'=>'y'
+        ];
+        
+        $text = strtr($text, $vietnamese);
         $text = preg_replace('/[^a-z0-9]+/', '_', $text);
         return trim($text, '_');
     }

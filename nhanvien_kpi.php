@@ -1,17 +1,30 @@
 <?php
-session_start();
-require_once 'controllers/NhanVienKPIController.php';
-require_once 'views/components/navbar.php';
+/**
+ * ✅ NHÂN VIÊN KPI - MAIN ENTRY POINT
+ * File: nhanvien_kpi.php (root folder)
+ */
 
+session_start();
+
+// ✅ Load controller
+require_once 'controllers/NhanVienKPIController.php';
+
+// ✅ Khởi tạo controller (đã có authentication bên trong)
 $controller = new NhanVienKPIController();
 
-// ✅ HỖ TRỢ AJAX REQUEST
+// ✅ Xử lý action
 $action = $_GET['action'] ?? 'report';
 
-if ($action === 'get_customers') {
-    // AJAX call để lấy danh sách khách hàng
-    $controller->getEmployeeCustomers();
-} else {
-    // Hiển thị trang báo cáo chính
-    $controller->showKPIReport();
+switch ($action) {
+    case 'get_customers':
+        // Lấy chi tiết khách hàng nhân viên (AJAX)
+        $controller->getEmployeeCustomers();
+        break;
+        
+    case 'report':
+    default:
+        // Hiển thị báo cáo KPI
+        $controller->showKPIReport();
+        break;
 }
+?>

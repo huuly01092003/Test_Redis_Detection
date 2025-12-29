@@ -1,17 +1,28 @@
 <?php
 /**
- * ✅ CONTROLLER TỐI ƯU - Báo Cáo Doanh Số Nhân Viên + REDIS NOTIFICATION
+ * ✅ CONTROLLER BÁO CÁO NHÂN VIÊN - WITH AUTHENTICATION
+ * File: controllers/NhanVienReportController.php
+ * Tương tự DskhController (KHÔNG CÓ EXPORT)
  */
 
 require_once 'models/NhanVienReportModel.php';
+require_once 'middleware/AuthMiddleware.php';
+require_once 'helpers/permission_helpers.php';
 
 class NhanVienReportController {
     private $model;
 
     public function __construct() {
+        // ✅ REQUIRE LOGIN
+        AuthMiddleware::requireLogin();
+        
         $this->model = new NhanVienReportModel();
     }
 
+    /**
+     * ✅ CHI TIẾT ĐƠN HÀNG NHÂN VIÊN (AJAX)
+     * Permission: Tất cả role có thể xem
+     */
     public function getEmployeeOrders() {
         if (ob_get_level()) {
             ob_end_clean();
@@ -39,8 +50,16 @@ class NhanVienReportController {
         }
     }
 
+    /**
+     * ✅ HIỂN THỊ BÁO CÁO CHÍNH
+     * Permission: Tất cả role có thể xem
+     */
     public function showReport() {
-        $startTime = microtime(true); // ✅ Đo thời gian
+        $startTime = microtime(true);
+        
+        // ✅ LẤY THÔNG TIN USER
+        $currentUser = AuthMiddleware::getCurrentUser();
+        $currentRole = AuthMiddleware::getCurrentRole();
         
         $message = '';
         $type = '';
@@ -207,7 +226,7 @@ class NhanVienReportController {
                 $type = 'info';
             }
             
-            $debug_info = "Tháng: $thang | Nhân viên: " . count($employees) . " | Nghi vấn: $tong_nghi_van | Top: $top_threshold | Thời gian: {$duration}ms";
+            $debug_info = "Tháng: $thang | Nhân viên: " . count($employees) . " | Nghi vấn: $tong_nghi_van | Top: $top_threshold | Thời gian: {$duration}ms | User: {$currentUser['username']} ({$currentRole})";
             
             if (empty($report)) {
                 $message = "⚠️ Không có dữ liệu cho khoảng thời gian này.";

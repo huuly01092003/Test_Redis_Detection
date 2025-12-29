@@ -1,7 +1,31 @@
 <?php
-$currentPage = 'import';
-require_once dirname(__DIR__) . '/components/navbar.php';
-renderNavbar($currentPage);
+/**
+ * ✅ VIEW BÁO CÁO NHÂN VIÊN - WITH SHARED NAVBAR
+ * File: views/nhanvien_report/report.php
+ * Giống cấu trúc views/dskh/list.php
+ */
+
+// ✅ Load navbar loader (tự động chọn navbar phù hợp)
+require_once __DIR__ . '/../components/navbar_loader.php';
+
+// ✅ Render navbar với thông tin bổ sung
+$additionalInfo = [
+    'period' => !empty($thang) ? 'Tháng ' . date('m/Y', strtotime($thang . '-01')) : '',
+    'breadcrumb' => [
+        ['label' => 'Dashboard', 'url' => 'dashboard.php'],
+        ['label' => 'Báo Cáo', 'url' => '#'],
+        ['label' => 'Kiểm Soát Nhân Viên', 'url' => '']
+    ]
+];
+
+renderSmartNavbar('nhanvien_report', $additionalInfo);
+
+// ✅ Load permission helpers
+if (!function_exists('isViewer')) {
+    require_once __DIR__ . '/../../helpers/permission_helpers.php';
+}
+
+$isViewer = isViewer();
 ?>
 <!DOCTYPE html>
 <html lang="vi">
@@ -11,38 +35,142 @@ renderNavbar($currentPage);
     <title>Báo Cáo Kiểm Soát - Doanh Số Nhân Viên</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- ✅ Load viewer restrictions nếu cần -->
+    <?php if ($isViewer): ?>
+    <link href="assets/css/viewer_restrictions.css" rel="stylesheet">
+    <?php endif; ?>
     <style>
-        body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
-        .card { background: white; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); margin-bottom: 25px; }
-        .card-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 20px 20px 0 0; }
-        .filter-section { background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-        .info-box { background: white; padding: 20px; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
-        .info-box h5 { margin-bottom: 5px; font-weight: 700; color: #667eea; }
+        body { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            min-height: 100vh; 
+            padding: 20px; 
+        }
+        .card { 
+            background: white; 
+            border-radius: 20px; 
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
+            margin-bottom: 25px; 
+        }
+        .card-header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            padding: 30px; 
+            border-radius: 20px 20px 0 0; 
+        }
+        .filter-section { 
+            background: #f8f9fa; 
+            padding: 20px; 
+            border-radius: 10px; 
+            margin-bottom: 20px; 
+        }
+        .info-box { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 10px; 
+            text-align: center; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08); 
+        }
+        .info-box h5 { 
+            margin-bottom: 5px; 
+            font-weight: 700; 
+            color: #667eea; 
+        }
         .info-box small { color: #666; }
-        .kpi-table thead th { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white !important; font-weight: 700; border: none; padding: 15px; text-align: center; position: sticky; top: 0; z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .kpi-table tbody tr { border-bottom: 1px solid #e0e0e0; transition: background 0.2s; }
-        .kpi-table tbody tr:hover { background: rgba(102, 126, 234, 0.05); }
-        .bg-red-highlight { background: linear-gradient(90deg, #fee 0%, #fdd 100%) !important; border-left: 4px solid #dc3545 !important; }
-        .bg-orange-highlight { background: linear-gradient(90deg, #fff5e6 0%, #ffe6cc 100%) !important; border-left: 4px solid #ff9800 !important; }
-        .bg-none-highlight { background: white !important; }
-        .legend { display: flex; gap: 20px; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 10px; flex-wrap: wrap; }
-        .legend-item { display: flex; align-items: center; gap: 10px; }
-        .legend-color { width: 40px; height: 30px; border-radius: 5px; border-left: 4px solid; }
-        .btn-group-custom { margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
-        .debug-info { background: #f8f9fa; border-left: 4px solid #667eea; padding: 10px 15px; margin-top: 20px; border-radius: 4px; font-size: 0.9rem; color: #555; }
-        .empty-state { text-align: center; padding: 60px 20px; color: #999; }
-        .empty-state i { font-size: 4rem; color: #ddd; margin-bottom: 20px; }
+        
+        .kpi-table thead th { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white !important; 
+            font-weight: 700; 
+            border: none; 
+            padding: 15px; 
+            text-align: center; 
+            position: sticky; 
+            top: 0; 
+            z-index: 10; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+        }
+        .kpi-table tbody tr { 
+            border-bottom: 1px solid #e0e0e0; 
+            transition: background 0.2s; 
+        }
+        .kpi-table tbody tr:hover { 
+            background: rgba(102, 126, 234, 0.05); 
+        }
+        
+        .bg-red-highlight { 
+            background: linear-gradient(90deg, #fee 0%, #fdd 100%) !important; 
+            border-left: 4px solid #dc3545 !important; 
+        }
+        .bg-orange-highlight { 
+            background: linear-gradient(90deg, #fff5e6 0%, #ffe6cc 100%) !important; 
+            border-left: 4px solid #ff9800 !important; 
+        }
+        .bg-none-highlight { 
+            background: white !important; 
+        }
+        
+        .legend { 
+            display: flex; 
+            gap: 20px; 
+            margin-bottom: 20px; 
+            padding: 15px; 
+            background: #f8f9fa; 
+            border-radius: 10px; 
+            flex-wrap: wrap; 
+        }
+        .legend-item { 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+        }
+        .legend-color { 
+            width: 40px; 
+            height: 30px; 
+            border-radius: 5px; 
+            border-left: 4px solid; 
+        }
+        
+        .btn-group-custom { 
+            margin-top: 20px; 
+            display: flex; 
+            gap: 10px; 
+            flex-wrap: wrap; 
+        }
+        
+        .debug-info { 
+            background: #f8f9fa; 
+            border-left: 4px solid #667eea; 
+            padding: 10px 15px; 
+            margin-top: 20px; 
+            border-radius: 4px; 
+            font-size: 0.9rem; 
+            color: #555; 
+        }
+        
+        .empty-state { 
+            text-align: center; 
+            padding: 60px 20px; 
+            color: #999; 
+        }
+        .empty-state i { 
+            font-size: 4rem; 
+            color: #ddd; 
+            margin-bottom: 20px; 
+        }
     </style>
 </head>
-<body>
+<body class="<?= getBodyClass() ?>">
+
 <div class="container-fluid">
     <div class="card mt-4 mb-4">
         <div class="card-header">
             <h2><i class="fas fa-chart-bar"></i> KIỂM SOÁT DOANH SỐ NHÂN VIÊN</h2>
+            <p class="mb-0 mt-2" style="opacity: 0.9;">Phân tích và phát hiện bất thường trong hoạt động bán hàng</p>
         </div>
         
         <div class="card-body">
-            <!-- Message Alert -->
+            <!-- ✅ Message Alert -->
             <?php if (!empty($message)): ?>
                 <div class="alert alert-<?= htmlspecialchars($type ?? 'info') ?> alert-dismissible fade show" role="alert">
                     <?= $message ?>
@@ -50,13 +178,12 @@ renderNavbar($currentPage);
                 </div>
             <?php endif; ?>
 
-            <!-- Form Filter -->
+            <!-- ✅ Form Filter -->
             <form id="filterForm" method="get" class="filter-section">
-                <input type="hidden" name="action" value="nhanvien_report">
                 <div class="row g-3 align-items-end">
                     <div class="col-md-3">
                         <label class="form-label fw-bold"><i class="fas fa-calendar-alt"></i> Tháng</label>
-                        <select id="thang" name="thang" class="form-select" required>
+                        <select name="thang" id="selectThang" class="form-select" required>
                             <?php foreach ($available_months as $m): ?>
                                 <option value="<?= htmlspecialchars($m) ?>" <?= ($m === $thang) ? 'selected' : '' ?>>
                                     Tháng <?= date('m/Y', strtotime($m . '-01')) ?>
@@ -67,13 +194,13 @@ renderNavbar($currentPage);
                     
                     <div class="col-md-3">
                         <label class="form-label fw-bold"><i class="fas fa-calendar"></i> Từ Ngày</label>
-                        <input type="date" id="tuNgay" name="tu_ngay" class="form-control" 
+                        <input type="date" name="tu_ngay" id="tuNgay" class="form-control" 
                                value="<?= htmlspecialchars($tu_ngay) ?>" required>
                     </div>
                     
                     <div class="col-md-3">
                         <label class="form-label fw-bold"><i class="fas fa-calendar"></i> Đến Ngày</label>
-                        <input type="date" id="denNgay" name="den_ngay" class="form-control" 
+                        <input type="date" name="den_ngay" id="denNgay" class="form-control" 
                                value="<?= htmlspecialchars($den_ngay) ?>" required>
                     </div>
                     
@@ -83,14 +210,14 @@ renderNavbar($currentPage);
                         </button>
                     </div>
                     <div class="col-md-1">
-                        <a href="?action=nhanvien_report" class="btn btn-secondary w-100">
-                            <i class="fas fa-sync"></i> Làm Mới
+                        <a href="nhanvien_report.php" class="btn btn-secondary w-100">
+                            <i class="fas fa-sync"></i> Reset
                         </a>
                     </div>
                 </div>
             </form>
 
-            <!-- ⭐ EMPTY STATE - Khi chưa filter -->
+            <!-- ✅ EMPTY STATE - Khi chưa filter -->
             <?php if (!$has_filtered): ?>
                 <div class="empty-state">
                     <i class="fas fa-filter"></i>
@@ -98,7 +225,7 @@ renderNavbar($currentPage);
                     <p class="text-muted">Hệ thống sẽ tính toán dữ liệu khi bạn nhấn "Rà Soát"</p>
                 </div>
             <?php else: ?>
-                <!-- Tổng Quan -->
+                <!-- ✅ Tổng Quan -->
                 <div class="row mb-4">
                     <div class="col-md-3">
                         <div class="info-box">
@@ -129,7 +256,7 @@ renderNavbar($currentPage);
                     </div>
                 </div>
 
-                <!-- Tỉ lệ Nghi Vấn -->
+                <!-- ✅ Tỉ lệ Nghi Vấn -->
                 <div class="row mb-4">
                     <div class="col-md-6">
                         <div class="info-box">
@@ -145,7 +272,7 @@ renderNavbar($currentPage);
                     </div>
                 </div>
 
-                <!-- Legend -->
+                <!-- ✅ Legend -->
                 <div class="legend">
                     <div class="legend-item">
                         <div class="legend-color" style="background: linear-gradient(90deg, #fee 0%, #fdd 100%); border-left-color: #dc3545;"></div>
@@ -161,7 +288,7 @@ renderNavbar($currentPage);
                     </div>
                 </div>
 
-                <!-- Bảng Báo Cáo -->
+                <!-- ✅ Bảng Báo Cáo -->
                 <div class="table-responsive" style="max-height: 600px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
                     <table class="table table-hover kpi-table" style="margin-bottom: 0;">
                         <thead class="table-light">
@@ -214,7 +341,7 @@ renderNavbar($currentPage);
                                             type="button"
                                             data-bs-toggle="modal" 
                                             data-bs-target="#detailModal"
-                                            onclick="showReportDetails('<?= htmlspecialchars(json_encode($r)) ?>', '<?= htmlspecialchars(json_encode($tong_tien_ky_detailed)) ?>')">
+                                            onclick="showReportDetails('<?= htmlspecialchars(json_encode($r), ENT_QUOTES) ?>', '<?= htmlspecialchars(json_encode($tong_tien_ky_detailed), ENT_QUOTES) ?>')">
                                         <i class="fas fa-eye"></i> Xem
                                     </button>
                                 </td>
@@ -234,7 +361,7 @@ renderNavbar($currentPage);
                     </table>
                 </div>
 
-                <!-- Debug Info -->
+                <!-- ✅ Debug Info -->
                 <?php if (!empty($debug_info)): ?>
                 <div class="debug-info">
                     <strong>📊 Thông Tin:</strong> <?= htmlspecialchars($debug_info) ?>
@@ -245,7 +372,7 @@ renderNavbar($currentPage);
     </div>
 </div>
 
-<!-- Detail Modal -->
+<!-- ✅ Detail Modal -->
 <div class="modal fade" id="detailModal" tabindex="-1" aria-labelledby="detailModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -275,13 +402,11 @@ async function showReportDetails(jsonData, jsonBenchmark) {
         const data = JSON.parse(jsonData);
         const benchmark = JSON.parse(jsonBenchmark);
         
-        // Lưu vào global để dùng cho tabs
         currentEmployeeData = data;
         currentBenchmark = benchmark;
         
         document.getElementById('modalEmpName').textContent = data.ten_nv + ' (' + data.ma_nv + ')';
         
-        // Render tab Thông Tin Nhân Viên (mặc định)
         renderEmployeeInfoTab();
         
     } catch (e) {
@@ -294,19 +419,16 @@ function renderEmployeeInfoTab() {
     const data = currentEmployeeData;
     const benchmark = currentBenchmark;
     
-    // Khoảng thời gian
     const dsTBKhoang_NV = data.ds_tien_do;
     const dsTBKhoang_Chung = benchmark.ds_tb_chung_khoang;
     const dsMaxKhoang_NV = data.ds_ngay_cao_nhat_nv_khoang;
     const dsMaxKhoang_Chung = benchmark.ds_ngay_cao_nhat_tb_khoang;
     
-    // Tháng
     const dsTBThang_NV = data.ds_tong_thang_nv;
     const dsTBThang_Chung = benchmark.ds_tb_chung_thang;
     const dsMaxThang_NV = data.ds_ngay_cao_nhat_nv_thang;
     const dsMaxThang_Chung = benchmark.ds_ngay_cao_nhat_tb_thang;
     
-    // Ngày hoạt động
     const soNgayKhoang_NV = data.so_ngay_co_doanh_so_khoang || 0;
     const soNgayThang_NV = data.so_ngay_co_doanh_so_thang || 0;
     const soNgayTrongKhoang = benchmark.so_ngay || 1;
@@ -331,7 +453,6 @@ function renderEmployeeInfoTab() {
     };
     
     let html = `
-        <!-- ✅ TABS -->
         <ul class="nav nav-tabs mb-3" id="detailTabs" role="tablist">
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="info-tab" data-bs-toggle="tab" data-bs-target="#info-content" 
@@ -347,7 +468,6 @@ function renderEmployeeInfoTab() {
             </li>
         </ul>
         
-        <!-- TAB CONTENT -->
         <div class="tab-content" id="detailTabContent">
             <div class="tab-pane fade show active" id="info-content" role="tabpanel">
                 <div style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 15px;">
@@ -469,27 +589,17 @@ async function renderOrdersTab() {
         const den_ngay = params.get('den_ngay');
         const dsr_code = currentEmployeeData.ma_nv;
         
-        // ✅ FIX: Đảm bảo URL đúng với action
-        const currentUrl = new URL(window.location.href);
-        currentUrl.searchParams.set('action', 'get_employee_orders');
-        currentUrl.searchParams.set('dsr_code', dsr_code);
-        currentUrl.searchParams.set('tu_ngay', tu_ngay);
-        currentUrl.searchParams.set('den_ngay', den_ngay);
+        const url = `nhanvien_report.php?action=get_orders&dsr_code=${dsr_code}&tu_ngay=${tu_ngay}&den_ngay=${den_ngay}`;
         
-        console.log('Fetching orders from:', currentUrl.toString()); // Debug
-        
-        const response = await fetch(currentUrl.toString());
+        const response = await fetch(url);
         const text = await response.text();
-        
-        console.log('Response text:', text.substring(0, 200)); // Debug
         
         let orders;
         try {
             orders = JSON.parse(text);
         } catch (parseError) {
             console.error('JSON Parse Error:', parseError);
-            console.error('Response was:', text);
-            container.innerHTML = `<p class="text-danger">Lỗi parse JSON. Kiểm tra console để xem response.</p>`;
+            container.innerHTML = `<p class="text-danger">Lỗi parse JSON.</p>`;
             return;
         }
         
@@ -503,7 +613,6 @@ async function renderOrdersTab() {
             return;
         }
         
-        // Tính tổng
         let totalAmount = 0;
         orders.forEach(o => totalAmount += parseFloat(o.so_tien || 0));
         
@@ -567,6 +676,66 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+</script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const selectThang = document.getElementById('selectThang');
+    const tuNgayInput = document.getElementById('tuNgay');
+    const denNgayInput = document.getElementById('denNgay');
+
+    // Hàm lấy ngày cuối cùng của tháng (YYYY-MM)
+    function getLastDayOfMonth(yearMonth) {
+        const [year, month] = yearMonth.split('-').map(Number);
+        return new Date(year, month, 0).getDate();
+    }
+
+    // 1. Xử lý khi thay đổi Tháng/Năm
+    selectThang.addEventListener('change', function() {
+        const monthVal = this.value; // Định dạng YYYY-MM
+        if (!monthVal) return;
+
+        const lastDay = getLastDayOfMonth(monthVal);
+        
+        const firstDate = `${monthVal}-01`;
+        const lastDate = `${monthVal}-${lastDay}`;
+
+        // Cập nhật giá trị
+        tuNgayInput.value = firstDate;
+        denNgayInput.value = lastDate;
+
+        // Cập nhật min/max để giới hạn người dùng không chọn ngoài tháng
+        tuNgayInput.min = firstDate;
+        tuNgayInput.max = lastDate;
+        denNgayInput.min = firstDate;
+        denNgayInput.max = lastDate;
+    });
+
+    // 2. Ràng buộc Từ Ngày <= Đến Ngày
+    tuNgayInput.addEventListener('change', function() {
+        if (this.value > denNgayInput.value) {
+            denNgayInput.value = this.value;
+        }
+        // Ngày kết thúc không thể nhỏ hơn ngày bắt đầu
+        denNgayInput.min = this.value;
+    });
+
+    denNgayInput.addEventListener('change', function() {
+        if (this.value < tuNgayInput.value) {
+            tuNgayInput.value = this.value;
+        }
+    });
+
+    // Kích hoạt giới hạn ngay khi load trang nếu đã có tháng được chọn sẵn
+    if (selectThang.value) {
+        const monthVal = selectThang.value;
+        const lastDay = getLastDayOfMonth(monthVal);
+        tuNgayInput.min = `${monthVal}-01`;
+        tuNgayInput.max = `${monthVal}-${lastDay}`;
+        denNgayInput.min = `${monthVal}-01`;
+        denNgayInput.max = `${monthVal}-${lastDay}`;
+    }
+});
 </script>
 </body>
 </html>

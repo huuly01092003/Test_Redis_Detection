@@ -1,32 +1,122 @@
-
 <?php
-$currentPage = 'import';
-require_once dirname(__DIR__) . '/components/navbar.php';
-renderNavbar($currentPage);
+/**
+ * ✅ VIEW KPI NHÂN VIÊN - WITH SHARED NAVBAR
+ * File: views/nhanvien_kpi/report.php
+ */
+
+// ✅ Load navbar loader (tự động chọn navbar phù hợp)
+require_once __DIR__ . '/../components/navbar_loader.php';
+
+// ✅ Render navbar với thông tin bổ sung
+$additionalInfo = [
+    'period' => !empty($filters['thang']) ? 'Tháng ' . date('m/Y', strtotime($filters['thang'] . '-01')) : '',
+    'breadcrumb' => [
+        ['label' => 'Dashboard', 'url' => 'dashboard.php'],
+        ['label' => 'Báo Cáo', 'url' => '#'],
+        ['label' => 'KPI Nhân Viên', 'url' => '']
+    ]
+];
+
+renderSmartNavbar('nhanvien_kpi', $additionalInfo);
+
+// ✅ Load permission helpers
+if (!function_exists('isViewer')) {
+    require_once __DIR__ . '/../../helpers/permission_helpers.php';
+}
+
+$isViewer = isViewer();
 ?>
 <!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Báo Cáo KPI V2 - Logic Ngưỡng N</title>
+    <title>Báo Cáo KPI - Logic Ngưỡng N</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <?php if ($isViewer): ?>
+    <link href="assets/css/viewer_restrictions.css" rel="stylesheet">
+    <?php endif; ?>
+    
     <style>
-        body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
-        .card { background: white; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); margin-bottom: 25px; }
-        .card-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 20px 20px 0 0; }
-        .kpi-card { background: white; padding: 18px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); text-align: center; }
-        .kpi-value { font-size: 2rem; font-weight: 700; color: #333; }
-        .kpi-label { font-size: 0.85rem; color: #666; margin-top: 5px; }
-        .threshold-box { background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); padding: 15px; border-radius: 10px; border-left: 4px solid #ffc107; }
-        .violation-badge { background: #dc3545; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 600; }
-        .customer-row { border-bottom: 1px solid #eee; padding: 10px 0; }
-        .customer-row:hover { background: #f8f9fa; }
-        .order-chip { background: #e3f2fd; padding: 3px 8px; border-radius: 8px; margin: 2px; display: inline-block; font-size: 0.75rem; }
+        body { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            min-height: 100vh; 
+            padding: 20px; 
+        }
+        .card { 
+            background: white; 
+            border-radius: 20px; 
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
+            margin-bottom: 25px; 
+        }
+        .card-header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            padding: 30px; 
+            border-radius: 20px 20px 0 0; 
+        }
+        .kpi-card { 
+            background: white; 
+            padding: 18px; 
+            border-radius: 10px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08); 
+            text-align: center; 
+        }
+        .kpi-value { 
+            font-size: 2rem; 
+            font-weight: 700; 
+            color: #333; 
+        }
+        .kpi-label { 
+            font-size: 0.85rem; 
+            color: #666; 
+            margin-top: 5px; 
+        }
+        .threshold-box { 
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); 
+            padding: 15px; 
+            border-radius: 10px; 
+            border-left: 4px solid #ffc107; 
+        }
+        .violation-badge { 
+            background: #dc3545; 
+            color: white; 
+            padding: 4px 10px; 
+            border-radius: 12px; 
+            font-size: 0.8rem; 
+            font-weight: 600; 
+        }
+        .customer-row { 
+            border-bottom: 1px solid #eee; 
+            padding: 10px 0; 
+        }
+        .customer-row:hover { 
+            background: #f8f9fa; 
+        }
+        .order-chip { 
+            background: #e3f2fd; 
+            padding: 3px 8px; 
+            border-radius: 8px; 
+            margin: 2px; 
+            display: inline-block; 
+            font-size: 0.75rem; 
+        }
+        .empty-state { 
+            text-align: center; 
+            padding: 60px 20px; 
+            color: #999; 
+        }
+        .empty-state i { 
+            font-size: 4rem; 
+            color: #ddd; 
+            margin-bottom: 20px; 
+        }
     </style>
 </head>
-<body>
+<body class="<?= getBodyClass() ?>">
+
 <div class="container-fluid">
     <div class="card mt-4">
         <div class="card-header">
@@ -36,7 +126,7 @@ renderNavbar($currentPage);
         
         <div class="card-body">
             <?php if (!empty($message)): ?>
-                <div class="alert alert-<?= htmlspecialchars($type ?? 'info') ?> alert-dismissible">
+                <div class="alert alert-<?= htmlspecialchars($type ?? 'info') ?> alert-dismissible fade show">
                     <?= $message ?>
                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
@@ -46,10 +136,10 @@ renderNavbar($currentPage);
             <form method="get" class="p-4" style="background: #f8f9fa; border-radius: 10px;">
                 <div class="row g-3">
                     <div class="col-md-2">
-                        <label class="form-label fw-bold">Tháng</label>
-                        <select name="thang" class="form-select" required>
+                        <label class="form-label fw-bold"><i class="fas fa-calendar-alt"></i> Tháng</label>
+                        <select name="thang" id="selectThang" class="form-select" required>
                             <?php foreach ($available_months as $m): ?>
-                                <option value="<?= $m ?>" <?= ($m === ($filters['thang'] ?? '')) ? 'selected' : '' ?>>
+                                <option value="<?= htmlspecialchars($m) ?>" <?= ($m === ($filters['thang'] ?? '')) ? 'selected' : '' ?>>
                                     <?= date('m/Y', strtotime($m . '-01')) ?>
                                 </option>
                             <?php endforeach; ?>
@@ -57,33 +147,33 @@ renderNavbar($currentPage);
                     </div>
                     
                     <div class="col-md-2">
-                        <label class="form-label fw-bold">Từ Ngày</label>
-                        <input type="date" name="tu_ngay" class="form-control" 
+                        <label class="form-label fw-bold"><i class="fas fa-calendar"></i> Từ Ngày</label>
+                        <input type="date" name="tu_ngay" id="tuNgay" class="form-control" 
                                value="<?= htmlspecialchars($filters['tu_ngay'] ?? '') ?>" required>
                     </div>
                     
                     <div class="col-md-2">
-                        <label class="form-label fw-bold">Đến Ngày</label>
-                        <input type="date" name="den_ngay" class="form-control" 
+                        <label class="form-label fw-bold"><i class="fas fa-calendar"></i> Đến Ngày</label>
+                        <input type="date" name="den_ngay" id="denNgay" class="form-control" 
                                value="<?= htmlspecialchars($filters['den_ngay'] ?? '') ?>" required>
                     </div>
                     
                     <div class="col-md-2">
-                        <label class="form-label fw-bold">Nhóm SP</label>
+                        <label class="form-label fw-bold"><i class="fas fa-box"></i> Nhóm SP</label>
                         <select name="product_filter" class="form-select">
                             <option value="">-- Tất Cả --</option>
                             <?php if (!empty($available_products)): foreach ($available_products as $p): ?>
-                                <option value="<?= $p ?>" <?= ($p === ($filters['product_filter'] ?? '')) ? 'selected' : '' ?>><?= $p ?></option>
+                                <option value="<?= htmlspecialchars($p) ?>" <?= ($p === ($filters['product_filter'] ?? '')) ? 'selected' : '' ?>><?= htmlspecialchars($p) ?></option>
                             <?php endforeach; endif; ?>
                         </select>
                     </div>
                     
                     <div class="col-md-2">
                         <label class="form-label fw-bold">
-                            Ngưỡng N <span class="text-danger">*</span>
+                            <i class="fas fa-users"></i> Ngưỡng N <span class="text-danger">*</span>
                         </label>
                         <input type="number" name="threshold_n" class="form-control" 
-                               value="<?= $filters['threshold_n'] ?? 5 ?>" min="1" max="100" required>
+                               value="<?= intval($filters['threshold_n'] ?? 5) ?>" min="1" max="100" required>
                         <small class="text-muted">khách/ngày</small>
                     </div>
                     
@@ -91,33 +181,33 @@ renderNavbar($currentPage);
                         <button type="submit" class="btn btn-primary w-100">
                             <i class="fas fa-search"></i> Phân Tích
                         </button>
-                        
                     </div>
                     <div class="col-md-1" style="padding-top: 30px;">
-                        <a href="?action=nhanvien_report" class="btn btn-secondary w-100">
-                            <i class="fas fa-sync"></i> Làm Mới
+                        <a href="nhanvien_kpi.php" class="btn btn-secondary w-100">
+                            <i class="fas fa-sync"></i> Reset
                         </a>
                     </div>
                 </div>
                 
                 <div class="threshold-box mt-3">
                     <strong><i class="fas fa-info-circle"></i> Logic:</strong> 
-                    Hệ thống sẽ đánh dấu mỗi ngày có <strong>số khách > <?= $filters['threshold_n'] ?? 5 ?></strong> là vi phạm.
+                    Hệ thống sẽ đánh dấu mỗi ngày có <strong>số khách > <?= intval($filters['threshold_n'] ?? 5) ?></strong> là vi phạm.
                     Risk Score = f(tỷ lệ ngày vi phạm, mức độ vượt, số ngày liên tục).
                 </div>
             </form>
 
             <?php if (!$has_filtered): ?>
-                <div class="text-center py-5">
-                    <i class="fas fa-filter fa-4x text-muted mb-3"></i>
+                <div class="empty-state">
+                    <i class="fas fa-filter"></i>
                     <h4>Nhập ngưỡng N và chọn khoảng thời gian</h4>
+                    <p class="text-muted">Hệ thống sẽ phân tích khi bạn nhấn "Phân Tích"</p>
                 </div>
             <?php else: ?>
                 <!-- KPI CARDS -->
                 <div class="row g-3 mt-3">
                     <div class="col-md-2">
                         <div class="kpi-card">
-                            <div class="kpi-value text-primary"><?= $statistics['employees_with_orders'] ?></div>
+                            <div class="kpi-value text-primary"><?= intval($statistics['employees_with_orders']) ?></div>
                             <div class="kpi-label">Nhân Viên</div>
                         </div>
                     </div>
@@ -135,27 +225,27 @@ renderNavbar($currentPage);
                     </div>
                     <div class="col-md-2">
                         <div class="kpi-card">
-                            <div class="kpi-value text-warning"><?= $statistics['warning_count'] ?></div>
+                            <div class="kpi-value text-warning"><?= intval($statistics['warning_count']) ?></div>
                             <div class="kpi-label">Cảnh Báo</div>
                         </div>
                     </div>
                     <div class="col-md-2">
                         <div class="kpi-card">
-                            <div class="kpi-value text-danger"><?= $statistics['danger_count'] ?></div>
+                            <div class="kpi-value text-danger"><?= intval($statistics['danger_count']) ?></div>
                             <div class="kpi-label">Nghiêm Trọng</div>
                         </div>
                     </div>
                     <div class="col-md-2">
                         <div class="kpi-card">
-                            <div class="kpi-value"><?= $statistics['normal_count'] ?></div>
+                            <div class="kpi-value"><?= intval($statistics['normal_count']) ?></div>
                             <div class="kpi-label">Bình Thường</div>
                         </div>
                     </div>
                 </div>
 
                 <!-- TABLE -->
-                <div class="table-responsive mt-4" style="max-height: 600px; overflow-y: auto;">
-                    <table class="table table-hover">
+                <div class="table-responsive mt-4" style="max-height: 600px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px;">
+                    <table class="table table-hover" style="margin-bottom: 0;">
                         <thead style="position: sticky; top: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; z-index: 10;">
                             <tr>
                                 <th class="text-center" style="width: 80px;">Mức Độ</th>
@@ -181,17 +271,17 @@ renderNavbar($currentPage);
                                 <td><?= htmlspecialchars($item['ten_nv']) ?></td>
                                 <td><?= htmlspecialchars($item['MaGSBH'] ?? '-') ?></td>
                                 <td class="text-end"><?= number_format($item['avg_daily_customers'], 1) ?></td>
-                                <td class="text-end text-danger"><strong><?= $item['max_day_customers'] ?></strong></td>
+                                <td class="text-end text-danger"><strong><?= intval($item['max_day_customers']) ?></strong></td>
                                 <td class="text-center">
                                     <?php if ($item['violation_count'] > 0): ?>
-                                        <span class="violation-badge"><?= $item['violation_count'] ?></span>
+                                        <span class="violation-badge"><?= intval($item['violation_count']) ?></span>
                                     <?php else: ?>
                                         <span class="badge bg-success">OK</span>
                                     <?php endif; ?>
                                 </td>
                                 <td class="text-end">
                                     <span style="padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; background: <?= ($item['risk_level'] === 'critical') ? '#dc3545' : (($item['risk_level'] === 'warning') ? '#ffc107' : '#28a745') ?>;">
-                                        <?= $item['risk_score'] ?>
+                                        <?= intval($item['risk_score']) ?>
                                     </span>
                                 </td>
                                 <td class="text-center">
@@ -200,7 +290,7 @@ renderNavbar($currentPage);
                                         <i class="fas fa-eye"></i> Vi Phạm
                                     </button>
                                     <button class="btn btn-sm btn-outline-success" 
-                                            onclick="loadCustomers('<?= $item['DSRCode'] ?>', '<?= $item['ten_nv'] ?>')">
+                                            onclick="loadCustomers('<?= htmlspecialchars($item['DSRCode']) ?>', '<?= htmlspecialchars($item['ten_nv']) ?>')">
                                         <i class="fas fa-users"></i> Khách
                                     </button>
                                 </td>
@@ -375,8 +465,8 @@ function renderCustomers(customers) {
             <div class="customer-row">
                 <div class="row">
                     <div class="col-md-8">
-                        <strong>${idx + 1}. ${c.customer_name || c.CustCode}</strong>
-                        <div class="text-muted small">${c.customer_address || '-'} | ${c.customer_province || '-'}</div>
+                        <strong>${idx + 1}. ${escapeHtml(c.customer_name || c.CustCode)}</strong>
+                        <div class="text-muted small">${escapeHtml(c.customer_address || '-')} | ${escapeHtml(c.customer_province || '-')}</div>
                     </div>
                     <div class="col-md-4 text-end">
                         <div><strong>${formatMoney(c.total_amount)}</strong></div>
@@ -388,7 +478,7 @@ function renderCustomers(customers) {
         
         if (c.orders && c.orders.length > 0) {
             c.orders.forEach(o => {
-                html += `<span class="order-chip">${o.date}: ${o.order_number} (${formatMoney(o.amount)})</span>`;
+                html += `<span class="order-chip">${o.date}: ${escapeHtml(o.order_number)} (${formatMoney(o.amount)})</span>`;
             });
         }
         
@@ -398,9 +488,76 @@ function renderCustomers(customers) {
     document.getElementById('customerContent').innerHTML = html;
 }
 
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 function formatMoney(val) {
     return parseFloat(val).toLocaleString('vi-VN') + 'đ';
 }
+</script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const selectThang = document.getElementById('selectThang');
+    const tuNgayInput = document.getElementById('tuNgay');
+    const denNgayInput = document.getElementById('denNgay');
+
+    // Hàm lấy ngày cuối cùng của tháng (YYYY-MM)
+    function getLastDayOfMonth(yearMonth) {
+        const [year, month] = yearMonth.split('-').map(Number);
+        return new Date(year, month, 0).getDate();
+    }
+
+    // 1. Xử lý khi thay đổi Tháng/Năm
+    selectThang.addEventListener('change', function() {
+        const monthVal = this.value; // Định dạng YYYY-MM
+        if (!monthVal) return;
+
+        const lastDay = getLastDayOfMonth(monthVal);
+        
+        const firstDate = `${monthVal}-01`;
+        const lastDate = `${monthVal}-${lastDay}`;
+
+        // Cập nhật giá trị
+        tuNgayInput.value = firstDate;
+        denNgayInput.value = lastDate;
+
+        // Cập nhật min/max để giới hạn người dùng không chọn ngoài tháng
+        tuNgayInput.min = firstDate;
+        tuNgayInput.max = lastDate;
+        denNgayInput.min = firstDate;
+        denNgayInput.max = lastDate;
+    });
+
+    // 2. Ràng buộc Từ Ngày <= Đến Ngày
+    tuNgayInput.addEventListener('change', function() {
+        if (this.value > denNgayInput.value) {
+            denNgayInput.value = this.value;
+        }
+        // Ngày kết thúc không thể nhỏ hơn ngày bắt đầu
+        denNgayInput.min = this.value;
+    });
+
+    denNgayInput.addEventListener('change', function() {
+        if (this.value < tuNgayInput.value) {
+            tuNgayInput.value = this.value;
+        }
+    });
+
+    // Kích hoạt giới hạn ngay khi load trang nếu đã có tháng được chọn sẵn
+    if (selectThang.value) {
+        const monthVal = selectThang.value;
+        const lastDay = getLastDayOfMonth(monthVal);
+        tuNgayInput.min = `${monthVal}-01`;
+        tuNgayInput.max = `${monthVal}-${lastDay}`;
+        denNgayInput.min = `${monthVal}-01`;
+        denNgayInput.max = `${monthVal}-${lastDay}`;
+    }
+});
 </script>
 </body>
 </html>

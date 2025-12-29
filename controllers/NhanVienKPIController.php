@@ -1,19 +1,28 @@
 <?php
 /**
- * ✅ CONTROLLER TỐI ƯU V2 - KPI Nhân Viên với Ngưỡng N + REDIS NOTIFICATION
+ * ✅ CONTROLLER KPI Nhân Viên + AUTHENTICATION
  */
 
 require_once 'models/NhanVienKPIModel.php';
+require_once 'middleware/AuthMiddleware.php';
+require_once 'helpers/permission_helpers.php';
 
 class NhanVienKPIController {
     private $model;
 
     public function __construct() {
+        // ✅ REQUIRE LOGIN
+        AuthMiddleware::requireLogin();
+        
         $this->model = new NhanVienKPIModel();
     }
 
     public function showKPIReport() {
-        $startTime = microtime(true); // ✅ Đo thời gian
+        $startTime = microtime(true);
+        
+        // ✅ LẤY THÔNG TIN USER
+        $currentUser = AuthMiddleware::getCurrentUser();
+        $currentRole = AuthMiddleware::getCurrentRole();
         
         $message = '';
         $type = '';
@@ -88,12 +97,26 @@ class NhanVienKPIController {
                 'threshold_n' => $threshold_n
             ];
             
-            // ✅ LẤY DỮ LIỆU (sẽ dùng cache nếu có)
+            // ✅ LẤY DỮ LIỆU
             $employees = $this->model->getAllEmployeesWithKPI($tu_ngay, $den_ngay, $product_filter, $threshold_n);
             
             if (empty($employees)) {
                 $message = "⚠️ Không có dữ liệu nhân viên.";
                 $type = 'warning';
+                
+                $statistics = [
+                    'total_employees' => 0,
+                    'employees_with_orders' => 0,
+                    'total_orders' => 0,
+                    'total_customers' => 0,
+                    'total_amount' => 0,
+                    'avg_orders_per_emp' => 0,
+                    'avg_customers_per_emp' => 0,
+                    'warning_count' => 0,
+                    'danger_count' => 0,
+                    'normal_count' => 0
+                ];
+                
                 require_once 'views/nhanvien_kpi/report.php';
                 return;
             }
@@ -171,10 +194,10 @@ class NhanVienKPIController {
                 $type = 'warning';
             } else {
                 if ($duration < 200) {
-                    $message = "✅ Dữ liệu từ Cache Redis ({$duration}ms) - Phân tích " . count($kpi_data) . " nhân viên với ngưỡng N={$threshold_n}!";
+                    $message = "✅ Dữ liệu từ Cache Redis ({$duration}ms) - Phân tích " . count($kpi_data) . " nhân viên với ngưỡng N={$threshold_n}! User: {$currentUser['username']} ({$currentRole})";
                     $type = 'success';
                 } else {
-                    $message = "✅ Dữ liệu từ Database ({$duration}ms) - Phân tích " . count($kpi_data) . " nhân viên với ngưỡng N={$threshold_n}! Lần sau sẽ nhanh hơn.";
+                    $message = "✅ Dữ liệu từ Database ({$duration}ms) - Phân tích " . count($kpi_data) . " nhân viên với ngưỡng N={$threshold_n}! Lần sau sẽ nhanh hơn. User: {$currentUser['username']} ({$currentRole})";
                     $type = 'info';
                 }
             }
@@ -183,13 +206,26 @@ class NhanVienKPIController {
             $message = "❌ Lỗi: " . $e->getMessage();
             $type = 'danger';
             error_log("NhanVienKPIController Error: " . $e->getMessage());
+            
+            $statistics = [
+                'total_employees' => 0,
+                'employees_with_orders' => 0,
+                'total_orders' => 0,
+                'total_customers' => 0,
+                'total_amount' => 0,
+                'avg_orders_per_emp' => 0,
+                'avg_customers_per_emp' => 0,
+                'warning_count' => 0,
+                'danger_count' => 0,
+                'normal_count' => 0
+            ];
         }
         
         require_once 'views/nhanvien_kpi/report.php';
     }
     
     /**
-     * ✅ AJAX: Lấy chi tiết khách hàng của nhân viên
+     * ✅ AJAX: Lấy chi tiết khách hàng
      */
     public function getEmployeeCustomers() {
         header('Content-Type: application/json');
