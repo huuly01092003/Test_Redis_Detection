@@ -612,11 +612,26 @@ class AnomalyCalculationService {
         $sql = "INSERT INTO summary_anomaly_results (
             customer_code, customer_name, province, district, total_score, risk_level,
             anomaly_count, total_sales, total_orders, total_qty, gkhl_status,
-            anomaly_details, calculated_for_years, calculated_for_months, cache_key
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        
+            anomaly_details, calculated_for_years, calculated_for_months, cache_key, calculated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE
+            customer_name = VALUES(customer_name),
+            province = VALUES(province),
+            district = VALUES(district),
+            total_score = VALUES(total_score),
+            risk_level = VALUES(risk_level),
+            anomaly_count = VALUES(anomaly_count),
+            total_sales = VALUES(total_sales),
+            total_orders = VALUES(total_orders),
+            total_qty = VALUES(total_qty),
+            gkhl_status = VALUES(gkhl_status),
+            anomaly_details = VALUES(anomaly_details),
+            calculated_for_years = VALUES(calculated_for_years),
+            calculated_for_months = VALUES(calculated_for_months),
+            calculated_at = NOW()";
+
         $stmt = $this->conn->prepare($sql);
-        
+
         foreach ($results as $row) {
             try {
                 $stmt->execute([
@@ -636,8 +651,8 @@ class AnomalyCalculationService {
                     $row['calculated_for_months'],
                     $row['cache_key']
                 ]);
-            } catch (Exception $e) {
-                // Skip duplicates
+            } catch (PDOException $e) {
+                error_log("Failed to insert customer {$row['customer_code']}: " . $e->getMessage());
             }
         }
     }
