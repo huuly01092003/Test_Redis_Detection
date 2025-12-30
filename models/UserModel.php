@@ -235,6 +235,49 @@ class UserModel {
     }
     
     /**
+     * Lấy lịch sử đăng nhập
+     */
+    public function getLoginHistory($limit = 50) {
+        $sql = "SELECT id, user_id, ip_address, user_agent, login_time, logout_time, session_token 
+                FROM login_history 
+                ORDER BY login_time DESC 
+                LIMIT ?";
+        
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute([$limit]);
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    /**
+     * Lấy tất cả user permissions
+     */
+    public function getAllUserPermissions() {
+        $sql = "SELECT id, user_id, permission_key, permission_value, created_at 
+                FROM user_permissions 
+                ORDER BY created_at DESC";
+        
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    /**
+     * Lấy lịch sử chuyển đổi vai trò
+     */
+    public function getRoleSwitchLog() {
+        $sql = "SELECT id, admin_user_id, switched_to_role, switched_at, switched_back_at 
+                FROM role_switch_log 
+                ORDER BY switched_at DESC";
+        
+        $stmt = $this->conn->prepare($sql);
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    /**
      * Update last login
      */
     private function updateLastLogin($userId) {
@@ -326,3 +369,4 @@ class UserModel {
         return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
     }
 }
+?>

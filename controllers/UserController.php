@@ -29,6 +29,11 @@ class UserController {
         
         $users = $this->model->getAllUsers($filters);
         
+        // Lấy dữ liệu cho tab thống kê
+        $loginHistory = $this->model->getLoginHistory(50);
+        $userPermissions = $this->model->getAllUserPermissions();
+        $roleSwitchLog = $this->model->getRoleSwitchLog();
+        
         require_once 'views/users/index.php';
     }
     
