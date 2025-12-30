@@ -393,5 +393,277 @@ class SystemManagementController {
         
         error_log("System Management: " . json_encode($logData));
     }
+
+    public function getCacheSummary() {
+    AuthMiddleware::requireAdmin();
+    header('Content-Type: application/json');
+    
+    if (!$this->redis) {
+        echo json_encode(['success' => false, 'error' => 'Redis không kết nối']);
+        exit;
+    }
+    
+    try {
+        $patterns = [
+            'anomaly:report:*',
+            'report:cache:*',
+            'nhanvien:report:*',
+            'nhanvien:kpi:*'
+        ];
+        
+        $summary = [];
+        
+        foreach ($patterns as $pattern) {
+            $keys = $this->redis->keys($pattern);
+            $totalSize = 0;
+            
+            foreach ($keys as $key) {
+                try {
+                    $value = $this->redis->get($key);
+                    if ($value !== false) {
+                        $totalSize += strlen($value);
+                    }
+                } catch (Exception $e) {
+                    continue;
+                }
+            }
+            
+            $summary[$pattern] = [
+                'count' => count($keys),
+                'size' => $totalSize
+            ];
+        }
+        
+        echo json_encode([
+            'success' => true,
+            'data' => $summary
+        ]);
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'error' => 'Lỗi: ' . $e->getMessage()
+        ]);
+    }
+    exit;
+}
+
+public function deleteRedisKey() {
+    AuthMiddleware::requireAdmin();
+    header('Content-Type: application/json');
+    
+    if (!$this->redis) {
+        echo json_encode(['success' => false, 'error' => 'Redis không kết nối']);
+        exit;
+    }
+    
+    $key = $_POST['key'] ?? '';
+    if (empty($key)) {
+        echo json_encode(['success' => false, 'error' => 'Key không hợp lệ']);
+        exit;
+    }
+    
+    try {
+        $result = $this->redis->del($key);
+        
+        if ($result) {
+            $this->logActivity('delete_redis_key', [
+                'key' => $key,
+                'user' => $_SESSION['username']
+            ]);
+            
+            echo json_encode([
+                'success' => true,
+                'message' => "Đã xóa key: {$key}"
+            ]);
+        } else {
+            echo json_encode([
+                'success' => false,
+                'error' => 'Key không tồn tại hoặc đã bị xóa'
+            ]);
+        }
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'error' => 'Lỗi: ' . $e->getMessage()
+        ]);
+    }
+    exit;
+}
+
+public function getRedisKeysEnhanced() {
+    AuthMiddleware::requireAdmin();
+    header('Content-Type: application/json');
+    
+    if (!$this->redis) {
+        echo json_encode(['success' => false, 'error' => 'Redis không kết nối']);
+        exit;
+    }
+    
+    try {
+        $pattern = $_GET['pattern'] ?? '*';
+        $keys = $this->redis->keys($pattern);
+        
+        $keysList = [];
+        foreach (array_slice($keys, 0, 200) as $key) { // Increased limit to 200
+            try {
+                $ttl = $this->redis->ttl($key);
+                $type = $this->redis->type($key);
+                
+                // Get size based on type
+                $size = 0;
+                switch ($type) {
+                    case Redis::REDIS_STRING:
+                        $value = $this->redis->get($key);
+                        $size = strlen($value ?? '');
+                        break;
+                    case Redis::REDIS_LIST:
+                        $size = $this->redis->lLen($key) * 100; // Estimate
+                        break;
+                    case Redis::REDIS_SET:
+                        $size = $this->redis->sCard($key) * 100; // Estimate
+                        break;
+                    case Redis::REDIS_ZSET:
+                        $size = $this->redis->zCard($key) * 100; // Estimate
+                        break;
+                    case Redis::REDIS_HASH:
+                        $size = $this->redis->hLen($key) * 100; // Estimate
+                        break;
+                }
+                
+                $keysList[] = [
+                    'key' => $key,
+                    'type' => $this->getRedisTypeName($type),
+                    'ttl' => $ttl,
+                    'size' => $size
+                ];
+            } catch (Exception $e) {
+                continue;
+            }
+        }
+        
+        echo json_encode([
+            'success' => true,
+            'total' => count($keys),
+            'showing' => count($keysList),
+            'keys' => $keysList
+        ]);
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'error' => 'Lỗi: ' . $e->getMessage()
+        ]);
+    }
+    exit;
+}
+
+private function getRedisTypeName($type) {
+    $types = [
+        Redis::REDIS_STRING => 'string',
+        Redis::REDIS_LIST => 'list',
+        Redis::REDIS_SET => 'set',
+        Redis::REDIS_ZSET => 'zset',
+        Redis::REDIS_HASH => 'hash',
+        Redis::REDIS_NOT_FOUND => 'none'
+    ];
+    return $types[$type] ?? 'unknown';
+}
+
+public function clearRedisByPatternSafe() {
+    AuthMiddleware::requireAdmin();
+    header('Content-Type: application/json');
+    
+    if (!$this->redis) {
+        echo json_encode(['success' => false, 'error' => 'Redis không kết nối']);
+        exit;
+    }
+    
+    $pattern = $_POST['pattern'] ?? '';
+    if (empty($pattern)) {
+        echo json_encode(['success' => false, 'error' => 'Pattern không hợp lệ']);
+        exit;
+    }
+    
+    // Safety check: Don't allow dangerous patterns
+    $dangerousPatterns = ['*', '?*', '*:*'];
+    if (in_array($pattern, $dangerousPatterns) && $pattern === '*') {
+        echo json_encode([
+            'success' => false, 
+            'error' => 'Sử dụng "Xóa Toàn Bộ Redis Cache" cho pattern này'
+        ]);
+        exit;
+    }
+    
+    try {
+        $keys = $this->redis->keys($pattern);
+        $deletedCount = 0;
+        
+        // Use pipeline for better performance
+        $this->redis->multi(Redis::PIPELINE);
+        foreach ($keys as $key) {
+            $this->redis->del($key);
+            $deletedCount++;
+        }
+        $this->redis->exec();
+        
+        $this->logActivity('clear_redis_pattern_safe', [
+            'pattern' => $pattern,
+            'keys_deleted' => $deletedCount,
+            'user' => $_SESSION['username']
+        ]);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => "Đã xóa {$deletedCount} keys từ Redis (pattern: {$pattern})"
+        ]);
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'error' => 'Lỗi: ' . $e->getMessage()
+        ]);
+    }
+    exit;
+}
+
+public function getCacheStats() {
+    AuthMiddleware::requireAdmin();
+    header('Content-Type: application/json');
+    
+    if (!$this->redis) {
+        echo json_encode(['success' => false, 'error' => 'Redis không kết nối']);
+        exit;
+    }
+    
+    try {
+        $stats = [
+            'total_keys' => $this->redis->dbSize(),
+            'memory' => $this->redis->info('memory'),
+            'by_type' => []
+        ];
+        
+        // Categorize keys by pattern
+        $patterns = [
+            'anomaly' => 'anomaly:*',
+            'report' => 'report:*',
+            'nhanvien' => 'nhanvien:*',
+            'other' => '*'
+        ];
+        
+        foreach ($patterns as $category => $pattern) {
+            $keys = $this->redis->keys($pattern);
+            $stats['by_type'][$category] = count($keys);
+        }
+        
+        echo json_encode([
+            'success' => true,
+            'stats' => $stats
+        ]);
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'error' => 'Lỗi: ' . $e->getMessage()
+        ]);
+    }
+    exit;
+}
 }
 ?>

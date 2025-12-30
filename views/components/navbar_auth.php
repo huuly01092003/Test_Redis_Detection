@@ -238,12 +238,12 @@ function renderAuthNavbar($currentPage = '', $additionalInfo = []) {
                         
                         <!-- Profile & Settings -->
                         <li>
-                            <a class="dropdown-item" href="profile.php">
+                            <a class="dropdown-item" href="users.php">
                                 <i class="fas fa-user-edit me-2 text-info"></i>Thông Tin Cá Nhân
                             </a>
                         </li>
                         <li>
-                            <a class="dropdown-item" href="change_password.php">
+                            <a class="dropdown-item" href="users.php">
                                 <i class="fas fa-key me-2 text-warning"></i>Đổi Mật Khẩu
                             </a>
                         </li>
@@ -257,7 +257,7 @@ function renderAuthNavbar($currentPage = '', $additionalInfo = []) {
                             </a>
                         </li>
                         <li>
-                            <a class="dropdown-item" href="index.php">
+                            <a class="dropdown-item" href="system.php">
                                 <i class="fas fa-database me-2 text-success"></i>Quản Lý Dữ Liệu
                             </a>
                         </li>

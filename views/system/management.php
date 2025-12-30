@@ -1,7 +1,11 @@
 <?php
 /**
- * System Management View
+ * Enhanced System Management View
  * File: views/system/management.php
+ * Features:
+ * - Removed date-based deletion from table management
+ * - Added Redis key tables grouped by cache type
+ * - Individual key deletion buttons
  */
 
 // Start session if not already started
@@ -76,14 +80,413 @@ $currentUser = AuthMiddleware::getCurrentUser();
             box-shadow: 0 5px 15px rgba(220, 53, 69, 0.4);
         }
         
-        .redis-key-item {
+        .redis-key-group {
             background: #f8f9fa;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 5px;
-            font-family: monospace;
-            font-size: 0.85rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
         }
+        
+        .redis-key-item {
+            background: white;
+            padding: 12px 15px;
+            border-radius: 5px;
+            margin-bottom: 8px;
+            border-left: 4px solid #667eea;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.2s;
+        }
+        
+        .redis-key-item:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transform: translateX(3px);
+        }
+        
+        .redis-key-name {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            color: #333;
+            flex: 1;
+            word-break: break-all;
+        }
+        
+        .redis-key-meta {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-right: 10px;
+        }
+        
+        .key-badge {
+            font-size: 0.75rem;
+            padding: 4px 8px;
+        }
+        
+        .nav-tabs .nav-link {
+            color: #667eea;
+            font-weight: 500;
+            padding: 12px 24px;
+        }
+        
+        .nav-tabs .nav-link.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+        }
+        
+        .cache-summary-table {
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        
+        .cache-summary-table table {
+            margin-bottom: 0;
+        }
+        
+        .cache-summary-table thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .loading-spinner {
+            text-align: center;
+            padding: 30px;
+        }
+
+        .redis-key-group {
+    background: #f8f9fa;
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.redis-key-item {
+    background: white;
+    padding: 12px 15px;
+    border-radius: 5px;
+    margin-bottom: 8px;
+    border-left: 4px solid #667eea;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.2s ease;
+}
+
+.redis-key-item:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    transform: translateX(5px);
+    border-left-color: #764ba2;
+}
+
+.redis-key-name {
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+    color: #333;
+    flex: 1;
+    word-break: break-all;
+    margin-right: 15px;
+}
+
+.redis-key-meta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-right: 10px;
+    flex-shrink: 0;
+}
+
+.key-badge {
+    font-size: 0.75rem;
+    padding: 4px 8px;
+    white-space: nowrap;
+}
+
+/* Cache Summary Table */
+.cache-summary-table {
+    background: white;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+.cache-summary-table table {
+    margin-bottom: 0;
+}
+
+.cache-summary-table thead {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.cache-summary-table thead th {
+    border: none;
+    font-weight: 600;
+    padding: 15px;
+}
+
+.cache-summary-table tbody tr:hover {
+    background: rgba(102, 126, 234, 0.05);
+}
+
+/* Loading States */
+.loading-spinner {
+    text-align: center;
+    padding: 30px;
+    color: #667eea;
+}
+
+.loading-spinner i {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Table Info Cards */
+.table-info {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #e0e0e0;
+    transition: all 0.2s ease;
+}
+
+.table-info:hover {
+    border-color: #667eea;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
+}
+
+/* Stat Cards */
+.stat-card {
+    background: white;
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    margin-bottom: 20px;
+    border-left: 4px solid #667eea;
+    transition: all 0.3s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.2);
+}
+
+.stat-card h3 {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #667eea;
+    margin-bottom: 5px;
+}
+
+/* Danger Zone */
+.danger-zone {
+    border: 2px solid #dc3545;
+    border-radius: 10px;
+    padding: 20px;
+    background: linear-gradient(135deg, #fff5f5 0%, #ffe5e5 100%);
+    margin-top: 20px;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { border-color: #dc3545; }
+    50% { border-color: #ff6b6b; }
+}
+
+.danger-zone h6 {
+    color: #dc3545;
+    font-weight: 700;
+}
+
+/* Buttons */
+.btn-danger-action {
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    border: none;
+    color: white;
+    font-weight: 600;
+    padding: 12px 24px;
+    transition: all 0.3s ease;
+}
+
+.btn-danger-action:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(220, 53, 69, 0.4);
+    background: linear-gradient(135deg, #c82333 0%, #bd2130 100%);
+}
+
+/* Action buttons in key items */
+.redis-key-item .btn-sm {
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    transition: all 0.2s ease;
+}
+
+.redis-key-item .btn-sm:hover {
+    transform: scale(1.1);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .redis-key-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .redis-key-meta {
+        width: 100%;
+        justify-content: space-between;
+    }
+    
+    .stat-card {
+        margin-bottom: 15px;
+    }
+}
+
+/* Tabs */
+.nav-tabs .nav-link {
+    color: #667eea;
+    font-weight: 500;
+    padding: 12px 24px;
+    border: none;
+    border-radius: 0;
+    transition: all 0.2s ease;
+}
+
+.nav-tabs .nav-link:hover {
+    background: rgba(102, 126, 234, 0.1);
+    border: none;
+}
+
+.nav-tabs .nav-link.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* Alert Animations */
+.alert {
+    animation: slideInDown 0.5s ease-out;
+}
+
+@keyframes slideInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Success/Error States */
+.text-success-glow {
+    color: #28a745;
+    text-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+}
+
+.text-danger-glow {
+    color: #dc3545;
+    text-shadow: 0 0 10px rgba(220, 53, 69, 0.5);
+}
+
+/* Badge Variations */
+.badge-gradient-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.badge-gradient-success {
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+}
+
+.badge-gradient-warning {
+    background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+}
+
+.badge-gradient-danger {
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+}
+
+/* Scrollbar Styling */
+.redis-key-group::-webkit-scrollbar {
+    width: 8px;
+}
+
+.redis-key-group::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.redis-key-group::-webkit-scrollbar-thumb {
+    background: #667eea;
+    border-radius: 4px;
+}
+
+.redis-key-group::-webkit-scrollbar-thumb:hover {
+    background: #764ba2;
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 50px 20px;
+    color: #6c757d;
+}
+
+.empty-state i {
+    font-size: 4rem;
+    margin-bottom: 20px;
+    opacity: 0.3;
+}
+
+.empty-state h5 {
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+/* Collapsible Sections */
+.collapsible-header {
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s ease;
+}
+
+.collapsible-header:hover {
+    background: rgba(102, 126, 234, 0.05);
+}
+
+.collapsible-header i.fa-chevron-down {
+    transition: transform 0.3s ease;
+}
+
+.collapsible-header.collapsed i.fa-chevron-down {
+    transform: rotate(-90deg);
+}
     </style>
 </head>
 <body>
@@ -131,19 +534,21 @@ renderSmartNavbar('system', ['breadcrumb' => $breadcrumb]);
         </div>
         <?php unset($_SESSION['error']); ?>
     <?php endif; ?>
-    <!-- ✅ TAB NAVIGATION -->
+
+    <!-- TAB NAVIGATION -->
     <ul class="nav nav-tabs mb-4" role="tablist">
         <li class="nav-item">
-            <a class="nav-link active" href="users.php?tab=users">
+            <a class="nav-link" href="users.php?tab=users">
                 <i class="fas fa-users me-2"></i>Người Dùng
             </a>
         </li>
         <li class="nav-item">
-            <a class="nav-link" href="users.php?tab=system">
+            <a class="nav-link active" href="users.php?tab=system">
                 <i class="fas fa-cogs me-2"></i>Quản Lý Data & Cache
             </a>
         </li>
     </ul>
+
     <!-- System Statistics -->
     <div class="row mb-4">
         <div class="col-md-3">
@@ -206,7 +611,7 @@ renderSmartNavbar('system', ['breadcrumb' => $breadcrumb]);
     <!-- Tab Content -->
     <div class="tab-content">
         <!-- ========================================
-             TAB 1: QUẢN LÝ BẢNG
+             TAB 1: QUẢN LÝ BẢNG (NO DATE DELETE)
              ======================================== -->
         <div id="tables" class="tab-pane fade show active">
             <div class="data-card">
@@ -217,29 +622,27 @@ renderSmartNavbar('system', ['breadcrumb' => $breadcrumb]);
                 <?php foreach ($stats['tables'] as $table => $info): ?>
                     <div class="table-info">
                         <div class="row align-items-center">
-                            <div class="col-md-4">
+                            <div class="col-md-5">
                                 <h6 class="mb-1">
                                     <i class="fas fa-table me-2 text-primary"></i>
                                     <?= htmlspecialchars($info['name']) ?>
                                 </h6>
                                 <small class="text-muted">Table: <code><?= $table ?></code></small>
                             </div>
-                            <div class="col-md-2 text-center">
-                                <strong><?= number_format($info['count']) ?></strong>
-                                <br><small class="text-muted">bản ghi</small>
+                            <div class="col-md-3 text-center">
+                                <div>
+                                    <strong style="font-size: 1.3rem;"><?= number_format($info['count']) ?></strong>
+                                    <small class="d-block text-muted">bản ghi</small>
+                                </div>
                             </div>
                             <div class="col-md-2 text-center">
-                                <strong><?= $info['size'] ?> MB</strong>
-                                <br><small class="text-muted">dung lượng</small>
+                                <div>
+                                    <strong style="font-size: 1.2rem; color: #667eea;"><?= $info['size'] ?> MB</strong>
+                                    <small class="d-block text-muted">dung lượng</small>
+                                </div>
                             </div>
-                            <div class="col-md-4 text-end">
-                                <?php if (in_array($table, ['orderdetail', 'summary_anomaly_results', 'summary_report_cache', 'summary_nhanvien_report_cache', 'summary_nhanvien_kpi_cache'])): ?>
-                                    <button class="btn btn-sm btn-warning me-2" 
-                                            onclick="showClearByDateModal('<?= $table ?>', '<?= $info['name'] ?>')">
-                                        <i class="fas fa-calendar me-1"></i>Xóa Theo Ngày
-                                    </button>
-                                <?php endif; ?>
-                                <button class="btn btn-sm btn-danger" 
+                            <div class="col-md-2 text-end">
+                                <button class="btn btn-danger" 
                                         onclick="confirmClearTable('<?= $table ?>', '<?= $info['name'] ?>')">
                                     <i class="fas fa-trash me-1"></i>Xóa Toàn Bộ
                                 </button>
@@ -265,7 +668,7 @@ renderSmartNavbar('system', ['breadcrumb' => $breadcrumb]);
         </div>
 
         <!-- ========================================
-             TAB 2: REDIS CACHE
+             TAB 2: REDIS CACHE WITH KEY TABLES
              ======================================== -->
         <div id="redis" class="tab-pane fade">
             <div class="data-card">
@@ -281,28 +684,35 @@ renderSmartNavbar('system', ['breadcrumb' => $breadcrumb]);
                         <strong>Memory:</strong> <?= $stats['redis']['memory_used'] ?>
                     </div>
 
-                    <div class="mb-4">
-                        <h6><i class="fas fa-search me-2"></i>Tìm Kiếm Keys</h6>
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <input type="text" class="form-control" id="redisPattern" 
-                                       placeholder="Nhập pattern (VD: anomaly:*, *report*)" value="*">
-                            </div>
-                            <div class="col-md-3">
-                                <button class="btn btn-primary w-100" onclick="searchRedisKeys()">
-                                    <i class="fas fa-search me-2"></i>Tìm Kiếm
-                                </button>
-                            </div>
-                            <div class="col-md-3">
-                                <button class="btn btn-danger w-100" onclick="confirmClearRedisByPattern()">
-                                    <i class="fas fa-trash me-2"></i>Xóa Theo Pattern
-                                </button>
-                            </div>
-                        </div>
+                    <!-- Cache Summary Table -->
+                    <div class="cache-summary-table mb-4">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40%;">Cache Type</th>
+                                    <th style="width: 15%; text-align: center;">Keys</th>
+                                    <th style="width: 15%; text-align: center;">Total Size</th>
+                                    <th style="width: 30%; text-align: center;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cacheSummaryBody">
+                                <tr>
+                                    <td colspan="4" class="text-center">
+                                        <button class="btn btn-primary" onclick="loadCacheSummary()">
+                                            <i class="fas fa-sync me-2"></i>Tải Thống Kê Cache
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
 
-                    <div id="redisKeysList" class="mb-4">
-                        <p class="text-muted">Nhấn "Tìm Kiếm" để xem danh sách keys</p>
+                    <!-- Detailed Keys Section -->
+                    <div id="detailedKeysSection" style="display: none;">
+                        <h6 class="mb-3">
+                            <i class="fas fa-list me-2"></i>Chi Tiết Cache Keys
+                        </h6>
+                        <div id="redisKeyGroups"></div>
                     </div>
 
                     <div class="danger-zone">
@@ -328,52 +738,84 @@ renderSmartNavbar('system', ['breadcrumb' => $breadcrumb]);
         </div>
 
         <!-- ========================================
-             TAB 3: SUMMARY TABLES
+             TAB 3: SUMMARY TABLES WITH KEYS
              ======================================== -->
         <div id="summary" class="tab-pane fade">
             <div class="data-card">
                 <h5 class="mb-4">
-                    <i class="fas fa-chart-bar me-2"></i>Quản Lý Bảng Summary
+                    <i class="fas fa-chart-bar me-2"></i>Quản Lý Bảng Summary & Cache Keys
                 </h5>
 
                 <?php 
                 $summaryTables = [
-                    'summary_anomaly_results' => $stats['tables']['summary_anomaly_results'],
-                    'summary_report_cache' => $stats['tables']['summary_report_cache'],
-                    'summary_nhanvien_report_cache' => $stats['tables']['summary_nhanvien_report_cache'],
-                    'summary_nhanvien_kpi_cache' => $stats['tables']['summary_nhanvien_kpi_cache']
+                    'summary_anomaly_results' => [
+                        'info' => $stats['tables']['summary_anomaly_results'],
+                        'pattern' => 'anomaly:report:*'
+                    ],
+                    'summary_report_cache' => [
+                        'info' => $stats['tables']['summary_report_cache'],
+                        'pattern' => 'report:cache:*'
+                    ],
+                    'summary_nhanvien_report_cache' => [
+                        'info' => $stats['tables']['summary_nhanvien_report_cache'],
+                        'pattern' => 'nhanvien:report:*'
+                    ],
+                    'summary_nhanvien_kpi_cache' => [
+                        'info' => $stats['tables']['summary_nhanvien_kpi_cache'],
+                        'pattern' => 'nhanvien:kpi:*'
+                    ]
                 ];
                 ?>
 
-                <?php foreach ($summaryTables as $table => $info): ?>
-                    <div class="table-info">
-                        <div class="row align-items-center">
+                <?php foreach ($summaryTables as $table => $data): ?>
+                    <div class="table-info mb-4">
+                        <div class="row align-items-center mb-3">
                             <div class="col-md-5">
                                 <h6 class="mb-1">
                                     <i class="fas fa-database me-2 text-success"></i>
-                                    <?= htmlspecialchars($info['name']) ?>
+                                    <?= htmlspecialchars($data['info']['name']) ?>
                                 </h6>
                                 <small class="text-muted">
-                                    <code><?= $table ?></code> - Cache/Tính toán trước
+                                    <code><?= $table ?></code>
                                 </small>
                             </div>
-                            <div class="col-md-2 text-center">
-                                <strong><?= number_format($info['count']) ?></strong>
-                                <br><small class="text-muted">records</small>
+                            <div class="col-md-3 text-center">
+                                <strong><?= number_format($data['info']['count']) ?></strong>
+                                <small class="d-block text-muted">records</small>
                             </div>
                             <div class="col-md-2 text-center">
-                                <strong><?= $info['size'] ?> MB</strong>
-                                <br><small class="text-muted">size</small>
+                                <strong><?= $data['info']['size'] ?> MB</strong>
+                                <small class="d-block text-muted">size</small>
                             </div>
-                            <div class="col-md-3 text-end">
-                                <button class="btn btn-sm btn-warning me-2" 
-                                        onclick="showClearByDateModal('<?= $table ?>', '<?= $info['name'] ?>')">
-                                    <i class="fas fa-calendar me-1"></i>Theo Ngày
+                            <div class="col-md-2 text-end">
+                                <button class="btn btn-sm btn-primary me-1" 
+                                        onclick="loadTableKeys('<?= $table ?>', '<?= $data['pattern'] ?>')">
+                                    <i class="fas fa-key me-1"></i>Xem Keys
                                 </button>
                                 <button class="btn btn-sm btn-danger" 
-                                        onclick="confirmClearTable('<?= $table ?>', '<?= $info['name'] ?>')">
+                                        onclick="confirmClearTable('<?= $table ?>', '<?= $data['info']['name'] ?>')">
                                     <i class="fas fa-trash me-1"></i>Xóa Hết
                                 </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Keys Container (Hidden by default) -->
+                        <div id="keys-<?= $table ?>" class="redis-key-group" style="display: none;">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-key me-2"></i>Cache Keys
+                                    <span class="badge bg-primary" id="count-<?= $table ?>">0</span>
+                                </h6>
+                                <button class="btn btn-sm btn-warning" 
+                                        onclick="confirmClearPattern('<?= $data['pattern'] ?>')">
+                                    <i class="fas fa-trash me-1"></i>Xóa Tất Cả Keys
+                                </button>
+                            </div>
+                            <div id="list-<?= $table ?>">
+                                <div class="loading-spinner">
+                                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                                    <p class="mt-2">Đang tải keys...</p>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -388,61 +830,6 @@ renderSmartNavbar('system', ['breadcrumb' => $breadcrumb]);
                         <li>Hệ thống tự động tạo lại khi cần thiết</li>
                     </ul>
                 </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Modal: Clear By Date -->
-<div class="modal fade" id="clearByDateModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header bg-warning text-dark">
-                <h5 class="modal-title">
-                    <i class="fas fa-calendar me-2"></i>Xóa Dữ Liệu Theo Ngày
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <p>Bảng: <strong id="modalTableName"></strong></p>
-                <input type="hidden" id="modalTable">
-                
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <label class="form-label fw-bold">Năm <span class="text-danger">*</span></label>
-                        <input type="number" class="form-control" id="clearYear" 
-                               min="2020" max="2030" placeholder="VD: 2024">
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label fw-bold">Tháng</label>
-                        <select class="form-select" id="clearMonth">
-                            <option value="">-- Tất cả --</option>
-                            <?php for ($i = 1; $i <= 12; $i++): ?>
-                                <option value="<?= $i ?>">Tháng <?= $i ?></option>
-                            <?php endfor; ?>
-                        </select>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label fw-bold">Ngày</label>
-                        <select class="form-select" id="clearDay">
-                            <option value="">-- Tất cả --</option>
-                            <?php for ($i = 1; $i <= 31; $i++): ?>
-                                <option value="<?= $i ?>"><?= $i ?></option>
-                            <?php endfor; ?>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="alert alert-warning mt-3">
-                    <i class="fas fa-exclamation-triangle me-2"></i>
-                    Dữ liệu sẽ bị xóa vĩnh viễn và không thể khôi phục!
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
-                <button type="button" class="btn btn-warning" onclick="executeClearByDate()">
-                    <i class="fas fa-trash me-2"></i>Xác Nhận Xóa
-                </button>
             </div>
         </div>
     </div>
@@ -474,52 +861,6 @@ function confirmClearTable(table, name) {
     });
 }
 
-function showClearByDateModal(table, name) {
-    $('#modalTable').val(table);
-    $('#modalTableName').text(name + ' (' + table + ')');
-    $('#clearYear').val('');
-    $('#clearMonth').val('');
-    $('#clearDay').val('');
-    new bootstrap.Modal(document.getElementById('clearByDateModal')).show();
-}
-
-function executeClearByDate() {
-    const table = $('#modalTable').val();
-    const year = $('#clearYear').val();
-    const month = $('#clearMonth').val();
-    const day = $('#clearDay').val();
-    
-    if (!year) {
-        alert('Vui lòng chọn năm');
-        return;
-    }
-    
-    let dateStr = `Năm ${year}`;
-    if (month) dateStr += ` Tháng ${month}`;
-    if (day) dateStr += ` Ngày ${day}`;
-    
-    if (!confirm(`⚠️ XÓA DỮ LIỆU\n\nBảng: ${table}\nThời gian: ${dateStr}\n\nBạn có chắc chắn?`)) {
-        return;
-    }
-    
-    $.post('system.php?action=clear_table_by_date', {
-        table: table,
-        year: year,
-        month: month,
-        day: day
-    }, function(response) {
-        if (response.success) {
-            alert('✅ ' + response.message);
-            bootstrap.Modal.getInstance(document.getElementById('clearByDateModal')).hide();
-            location.reload();
-        } else {
-            alert('❌ ' + response.error);
-        }
-    }, 'json').fail(function() {
-        alert('❌ Lỗi kết nối server');
-    });
-}
-
 function confirmClearAllData() {
     const confirmation = prompt('⚠️⚠️⚠️ CẢNH BÁO CỰC KỲ NGUY HIỂM ⚠️⚠️⚠️\n\nĐIỀU NÀY SẼ XÓA TOÀN BỘ DỮ LIỆU HỆ THỐNG!\n\nGõ "XOA TAT CA" để xác nhận:');
     
@@ -535,14 +876,222 @@ function confirmClearAllData() {
 // REDIS MANAGEMENT FUNCTIONS
 // ========================================
 
-function searchRedisKeys() {
-    const pattern = $('#redisPattern').val() || '*';
+function loadCacheSummary() {
+    $('#cacheSummaryBody').html(`
+        <tr>
+            <td colspan="4" class="text-center">
+                <i class="fas fa-spinner fa-spin me-2"></i>Đang tải thống kê...
+            </td>
+        </tr>
+    `);
     
-    $.get('system.php?action=get_redis_keys', {
-        pattern: pattern
-    }, function(response) {
+    $.get('system.php?action=get_cache_summary', function(response) {
         if (response.success) {
-            displayRedisKeys(response);
+            displayCacheSummary(response.data);
+        } else {
+            $('#cacheSummaryBody').html(`
+                <tr>
+                    <td colspan="4" class="text-center text-danger">
+                        <i class="fas fa-exclamation-circle me-2"></i>Lỗi: ${response.error}
+                    </td>
+                </tr>
+            `);
+        }
+    }, 'json').fail(function() {
+        $('#cacheSummaryBody').html(`
+            <tr>
+                <td colspan="4" class="text-center text-danger">
+                    <i class="fas fa-exclamation-circle me-2"></i>Lỗi kết nối server
+                </td>
+            </tr>
+        `);
+    });
+}
+
+function displayCacheSummary(data) {
+    let html = '';
+    
+    const cacheTypes = {
+        'anomaly:report:*': { name: 'Anomaly Reports', icon: 'exclamation-triangle', color: 'warning' },
+        'report:cache:*': { name: 'Report Cache', icon: 'chart-bar', color: 'info' },
+        'nhanvien:report:*': { name: 'Nhân Viên Reports', icon: 'user-tie', color: 'success' },
+        'nhanvien:kpi:*': { name: 'KPI Cache', icon: 'chart-line', color: 'primary' }
+    };
+    
+    for (const [pattern, info] of Object.entries(cacheTypes)) {
+        const stats = data[pattern] || { count: 0, size: 0 };
+        html += `
+            <tr>
+                <td>
+                    <i class="fas fa-${info.icon} me-2 text-${info.color}"></i>
+                    <strong>${info.name}</strong>
+                    <br><small class="text-muted">${pattern}</small>
+                </td>
+                <td class="text-center">
+                    <span class="badge bg-${info.color}">${stats.count}</span>
+                </td>
+                <td class="text-center">
+                    <strong>${(stats.size / 1024).toFixed(2)} KB</strong>
+                </td>
+                <td class="text-center">
+                    <button class="btn btn-sm btn-primary me-1" onclick="loadDetailedKeys('${pattern}')">
+                        <i class="fas fa-eye me-1"></i>Xem Chi Tiết
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="confirmClearPattern('${pattern}')">
+                        <i class="fas fa-trash me-1"></i>Xóa Pattern
+                    </button>
+                </td>
+            </tr>
+        `;
+    }
+    
+    if (html === '') {
+        html = `
+            <tr>
+                <td colspan="4" class="text-center text-muted">
+                    <i class="fas fa-inbox me-2"></i>Không có cache keys
+                </td>
+            </tr>
+        `;
+    }
+    
+    $('#cacheSummaryBody').html(html);
+}
+
+function loadDetailedKeys(pattern) {
+    $('#detailedKeysSection').show();
+    $('#redisKeyGroups').html(`
+        <div class="loading-spinner">
+            <i class="fas fa-spinner fa-spin fa-2x"></i>
+            <p class="mt-2">Đang tải keys...</p>
+        </div>
+    `);
+    
+    $.get('system.php?action=get_redis_keys', { pattern: pattern }, function(response) {
+        if (response.success) {
+            displayDetailedKeys(response, pattern);
+        } else {
+            $('#redisKeyGroups').html(`
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-circle me-2"></i>${response.error}
+                </div>
+            `);
+        }
+    }, 'json');
+}
+
+function displayDetailedKeys(data, pattern) {
+    let html = `
+        <div class="redis-key-group">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="mb-0">
+                    <i class="fas fa-key me-2"></i>Pattern: <code>${pattern}</code>
+                    <span class="badge bg-primary ms-2">${data.total} keys</span>
+                </h6>
+                <button class="btn btn-sm btn-secondary" onclick="$('#detailedKeysSection').hide()">
+                    <i class="fas fa-times me-1"></i>Đóng
+                </button>
+            </div>
+    `;
+    
+    if (data.keys.length === 0) {
+        html += `<p class="text-muted text-center">Không tìm thấy key nào</p>`;
+    } else {
+        data.keys.forEach(key => {
+            const ttlText = key.ttl > 0 ? `${key.ttl}s` : 'No expire';
+            html += `
+                <div class="redis-key-item">
+                    <div class="redis-key-name">${escapeHtml(key.key)}</div>
+                    <div class="redis-key-meta">
+                        <span class="badge bg-info key-badge">${key.type}</span>
+                        <span class="badge bg-secondary key-badge">${ttlText}</span>
+                        <span class="badge bg-primary key-badge">${(key.size / 1024).toFixed(2)} KB</span>
+                    </div>
+                    <button class="btn btn-sm btn-danger" onclick="deleteRedisKey('${escapeHtml(key.key)}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            `;
+        });
+    }
+    
+    html += `</div>`;
+    $('#redisKeyGroups').html(html);
+}
+
+function loadTableKeys(table, pattern) {
+    const container = $(`#keys-${table}`);
+    const listContainer = $(`#list-${table}`);
+    
+    if (container.is(':visible')) {
+        container.slideUp();
+        return;
+    }
+    
+    container.slideDown();
+    
+    $.get('system.php?action=get_redis_keys', { pattern: pattern }, function(response) {
+        if (response.success) {
+            $(`#count-${table}`).text(response.total);
+            
+            let html = '';
+            if (response.keys.length === 0) {
+                html = `<p class="text-muted text-center">Không có cache keys</p>`;
+            } else {
+                response.keys.forEach(key => {
+                    const ttlText = key.ttl > 0 ? `${key.ttl}s` : 'No expire';
+                    html += `
+                        <div class="redis-key-item">
+                            <div class="redis-key-name">${escapeHtml(key.key)}</div>
+                            <div class="redis-key-meta">
+                                <span class="badge bg-info key-badge">${key.type}</span>
+                                <span class="badge bg-secondary key-badge">${ttlText}</span>
+                                <span class="badge bg-primary key-badge">${(key.size / 1024).toFixed(2)} KB</span>
+                            </div>
+                            <button class="btn btn-sm btn-danger" onclick="deleteRedisKey('${escapeHtml(key.key)}', '${table}')">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    `;
+                });
+            }
+            listContainer.html(html);
+        } else {
+            listContainer.html(`
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-circle me-2"></i>${response.error}
+                </div>
+            `);
+        }
+    }, 'json').fail(function() {
+        listContainer.html(`
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-circle me-2"></i>Lỗi kết nối server
+            </div>
+        `);
+    });
+}
+
+function deleteRedisKey(key, tableContext = null) {
+    if (!confirm(`⚠️ Xóa cache key?\n\nKey: ${key}\n\nBạn có chắc chắn?`)) {
+        return;
+    }
+    
+    $.post('system.php?action=delete_redis_key', { key: key }, function(response) {
+        if (response.success) {
+            alert('✅ ' + response.message);
+            
+            // Reload the specific section
+            if (tableContext) {
+                // Reload table keys
+                const pattern = $(`#keys-${tableContext}`).data('pattern');
+                if (pattern) {
+                    loadTableKeys(tableContext, pattern);
+                }
+            } else {
+                // Reload detailed view
+                location.reload();
+            }
         } else {
             alert('❌ ' + response.error);
         }
@@ -551,43 +1100,15 @@ function searchRedisKeys() {
     });
 }
 
-function displayRedisKeys(data) {
-    let html = `<h6>Tìm thấy ${data.total} keys (hiển thị ${data.showing}):</h6>`;
-    
-    if (data.keys.length === 0) {
-        html += '<p class="text-muted">Không tìm thấy key nào</p>';
-    } else {
-        data.keys.forEach(key => {
-            const ttlText = key.ttl > 0 ? `TTL: ${key.ttl}s` : 'No expire';
-            html += `
-                <div class="redis-key-item">
-                    <strong>${key.key}</strong>
-                    <span class="float-end">
-                        <span class="badge bg-info">${key.type}</span>
-                        <span class="badge bg-secondary">${ttlText}</span>
-                        <span class="badge bg-primary">${(key.size/1024).toFixed(2)} KB</span>
-                    </span>
-                </div>
-            `;
-        });
-    }
-    
-    $('#redisKeysList').html(html);
-}
-
-function confirmClearRedisByPattern() {
-    const pattern = $('#redisPattern').val() || '*';
-    
-    if (!confirm(`⚠️ XÓA REDIS KEYS\n\nPattern: ${pattern}\n\nBạn có chắc chắn?`)) {
+function confirmClearPattern(pattern) {
+    if (!confirm(`⚠️ XÓA TẤT CẢ KEYS\n\nPattern: ${pattern}\n\nBạn có chắc chắn?`)) {
         return;
     }
     
-    $.post('system.php?action=clear_redis_pattern', {
-        pattern: pattern
-    }, function(response) {
+    $.post('system.php?action=clear_redis_pattern', { pattern: pattern }, function(response) {
         if (response.success) {
             alert('✅ ' + response.message);
-            searchRedisKeys();
+            location.reload();
         } else {
             alert('❌ ' + response.error);
         }
@@ -611,6 +1132,17 @@ function confirmClearRedisAll() {
     }, 'json').fail(function() {
         alert('❌ Lỗi kết nối server');
     });
+}
+
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
 }
 
 // Auto-hide alerts

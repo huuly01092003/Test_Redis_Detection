@@ -45,6 +45,7 @@ require_once __DIR__ . '/controllers/AnomalyController.php';
 // Get action
 $action = $_GET['action'] ?? 'index';
 
+
 // ✅ Check export permission
 if ($action === 'export') {
     // Viewers cannot export

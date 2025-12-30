@@ -669,6 +669,11 @@ renderSmartNavbar('anomaly', $additionalInfo);
             }
         }
     });
+
+
+    
 </script>
+
+
 </body>
 </html>

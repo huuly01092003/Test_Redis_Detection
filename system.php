@@ -1,9 +1,9 @@
 <?php
 /**
  * ============================================
- * SYSTEM MANAGEMENT ROUTER
+ * ENHANCED SYSTEM MANAGEMENT ROUTER
  * ============================================
- * Handles all system management operations
+ * Handles all system management operations including new Redis features
  */
 
 session_start();
@@ -38,12 +38,8 @@ switch ($action) {
     case 'clear_table_all':
         $controller->clearTableAll();
         break;
-        
-    case 'clear_table_by_date':
-        $controller->clearTableByDate();
-        break;
     
-    // Redis operations
+    // Redis operations - Enhanced
     case 'clear_redis_all':
         $controller->clearRedisAll();
         break;
@@ -54,6 +50,21 @@ switch ($action) {
         
     case 'get_redis_keys':
         $controller->getRedisKeys();
+        break;
+    
+    // NEW: Get cache summary
+    case 'get_cache_summary':
+        $controller->getCacheSummary();
+        break;
+    
+    // NEW: Delete single Redis key
+    case 'delete_redis_key':
+        $controller->deleteRedisKey();
+        break;
+    
+    // NEW: Get cache statistics
+    case 'get_cache_stats':
+        $controller->getCacheStats();
         break;
     
     // Default: show management interface
