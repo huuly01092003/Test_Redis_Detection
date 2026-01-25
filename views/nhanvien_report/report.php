@@ -618,7 +618,7 @@ async function renderOrdersTab() {
         
         let html = `
             <div class="alert alert-info">
-                <strong>📊 Tổng quan:</strong> ${orders.length} đơn hàng | 
+                <strong>📊 Tổng quan:</strong> ${orders.length} chi tiết đơn hàng | 
                 <strong>Tổng tiền:</strong> ${totalAmount.toLocaleString('vi-VN')}đ
             </div>
             

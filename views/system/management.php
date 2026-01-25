@@ -601,11 +601,7 @@ renderSmartNavbar('system', ['breadcrumb' => $breadcrumb]);
                 <i class="fas fa-server me-2"></i>Redis Cache
             </a>
         </li>
-        <li class="nav-item">
-            <a class="nav-link" data-bs-toggle="tab" href="#summary">
-                <i class="fas fa-chart-bar me-2"></i>Summary Tables
-            </a>
-        </li>
+        
     </ul>
 
     <!-- Tab Content -->
@@ -736,91 +732,6 @@ renderSmartNavbar('system', ['breadcrumb' => $breadcrumb]);
                 <?php endif; ?>
             </div>
         </div>
-
-        <!-- ========================================
-             TAB 3: SUMMARY TABLES WITH KEYS
-             ======================================== -->
-        <div id="summary" class="tab-pane fade">
-            <div class="data-card">
-                <h5 class="mb-4">
-                    <i class="fas fa-chart-bar me-2"></i>Quản Lý Bảng Summary & Cache Keys
-                </h5>
-
-                <?php 
-                $summaryTables = [
-                    'summary_anomaly_results' => [
-                        'info' => $stats['tables']['summary_anomaly_results'],
-                        'pattern' => 'anomaly:report:*'
-                    ],
-                    'summary_report_cache' => [
-                        'info' => $stats['tables']['summary_report_cache'],
-                        'pattern' => 'report:cache:*'
-                    ],
-                    'summary_nhanvien_report_cache' => [
-                        'info' => $stats['tables']['summary_nhanvien_report_cache'],
-                        'pattern' => 'nhanvien:report:*'
-                    ],
-                    'summary_nhanvien_kpi_cache' => [
-                        'info' => $stats['tables']['summary_nhanvien_kpi_cache'],
-                        'pattern' => 'nhanvien:kpi:*'
-                    ]
-                ];
-                ?>
-
-                <?php foreach ($summaryTables as $table => $data): ?>
-                    <div class="table-info mb-4">
-                        <div class="row align-items-center mb-3">
-                            <div class="col-md-5">
-                                <h6 class="mb-1">
-                                    <i class="fas fa-database me-2 text-success"></i>
-                                    <?= htmlspecialchars($data['info']['name']) ?>
-                                </h6>
-                                <small class="text-muted">
-                                    <code><?= $table ?></code>
-                                </small>
-                            </div>
-                            <div class="col-md-3 text-center">
-                                <strong><?= number_format($data['info']['count']) ?></strong>
-                                <small class="d-block text-muted">records</small>
-                            </div>
-                            <div class="col-md-2 text-center">
-                                <strong><?= $data['info']['size'] ?> MB</strong>
-                                <small class="d-block text-muted">size</small>
-                            </div>
-                            <div class="col-md-2 text-end">
-                                <button class="btn btn-sm btn-primary me-1" 
-                                        onclick="loadTableKeys('<?= $table ?>', '<?= $data['pattern'] ?>')">
-                                    <i class="fas fa-key me-1"></i>Xem Keys
-                                </button>
-                                <button class="btn btn-sm btn-danger" 
-                                        onclick="confirmClearTable('<?= $table ?>', '<?= $data['info']['name'] ?>')">
-                                    <i class="fas fa-trash me-1"></i>Xóa Hết
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <!-- Keys Container (Hidden by default) -->
-                        <div id="keys-<?= $table ?>" class="redis-key-group" style="display: none;">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <h6 class="mb-0">
-                                    <i class="fas fa-key me-2"></i>Cache Keys
-                                    <span class="badge bg-primary" id="count-<?= $table ?>">0</span>
-                                </h6>
-                                <button class="btn btn-sm btn-warning" 
-                                        onclick="confirmClearPattern('<?= $data['pattern'] ?>')">
-                                    <i class="fas fa-trash me-1"></i>Xóa Tất Cả Keys
-                                </button>
-                            </div>
-                            <div id="list-<?= $table ?>">
-                                <div class="loading-spinner">
-                                    <i class="fas fa-spinner fa-spin fa-2x"></i>
-                                    <p class="mt-2">Đang tải keys...</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
-
                 <div class="alert alert-info mt-4">
                     <h6><i class="fas fa-info-circle me-2"></i>Về Summary Tables:</h6>
                     <ul class="mb-0">

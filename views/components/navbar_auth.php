@@ -79,7 +79,7 @@ function renderAuthNavbar($currentPage = '', $additionalInfo = []) {
                     </a>
                     <ul class="dropdown-menu dropdown-menu-dark">
                         <li>
-                            <a class="dropdown-item <?= $baseName === 'index' ? 'active' : '' ?>" href="index.php">
+                            <a class="dropdown-item <?= $baseName === 'import' ? 'active' : '' ?>" href="import.php">
                                 <i class="fas fa-file-csv me-2"></i>Order Detail
                             </a>
                         </li>

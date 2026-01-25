@@ -1040,7 +1040,7 @@ const anomalyConfig = {
                     </td>
                     <td style="padding: 12px;">
                         <div style="font-weight: 600; color: #667eea; margin-bottom: 5px;">
-                            📦 Chi tiết ${row.orders?.length || 0} đơn hàng:
+                            📦  ${row.orders?.length || 0} Chi tiết đơn hàng:
                         </div>
                     </td>
                 </tr>`;
@@ -1133,7 +1133,7 @@ const anomalyConfig = {
                     <td style="padding: 12px;">
                         ${hasOrders ? `
                         <div style="font-weight: 600; color: #667eea; margin-bottom: 5px;">
-                            📦 Chi tiết ${row.orders.length} đơn hàng ${isCheckpoint ? '(CHECKPOINT)' : ''}:
+                            📦  ${row.orders.length} Chi tiết đơn hàng ${isCheckpoint ? '(CHECKPOINT)' : ''}:
                         </div>
                         ` : ''}
                     </td>
@@ -1210,7 +1210,7 @@ const anomalyConfig = {
                     <td style="padding: 12px;">
                         ${hasOrders ? `
                         <div style="font-weight: 600; color: #667eea; margin-bottom: 5px;">
-                            📦 Chi tiết ${row.orders.length} đơn hàng ${isHighVolume ? '(DỒN DẬP)' : ''}:
+                            📦  ${row.orders.length} Chi tiết đơn hàng ${isHighVolume ? '(DỒN DẬP)' : ''}:
                         </div>
                         ` : ''}
                     </td>
@@ -1312,7 +1312,7 @@ const anomalyConfig = {
                     <td style="padding: 12px;">
                         ${hasOrders ? `
                         <div style="font-weight: 600; color: #667eea; margin-bottom: 5px;">
-                            📦 Chi tiết ${row.orders.length} đơn hàng:
+                            📦  ${row.orders.length} Chi tiết đơn hàng:
                         </div>
                         ` : `
                         <div style="text-align: center; color: #856404; font-weight: 600;">
@@ -1508,7 +1508,7 @@ const anomalyConfig = {
                     <td style="padding: 12px;">
                         ${hasOrders ? `
                         <div style="font-weight: 600; color: #667eea; margin-bottom: 5px;">
-                            📦 Chi tiết ${row.orders.length} đơn hàng:
+                            📦  ${row.orders.length} Chi tiết đơn hàng:
                         </div>
                         ` : `
                         <div style="text-align: center; color: #721c24; font-weight: 600;">
